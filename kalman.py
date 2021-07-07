@@ -194,7 +194,6 @@ class state_spacer():
         matrices, list_3d = self.get_matrices(syst_matr)
         a, P, v, F, K = self.kalman_filter(syst_matr, filter_init)
         
-        L = 1 - K
         r = np.zeros((a.shape))
         r[:] = np.nan
         N = np.zeros((P.shape))
@@ -211,11 +210,14 @@ class state_spacer():
         for t in range(len(a)-3, -2,-1):
             matr = self.transit_syst_matrix(list_3d, t, matrices.copy())
             Z = matr['Z']
+            T = matr['T']
+            
+            L = T - K[t+1]*Z
 
-            r[t] = v[t+1]*np.linalg.inv(F[t+1]).transpose()*Z + r[t+1]*L[t+1]
-            N[t] = Z.transpose()*np.linalg.inv(F[t+1])*Z + L[t+1]*N[t+1]*L[t+1]
+            r[t] = v[t+1]*np.linalg.inv(F[t+1]).transpose()*Z + (r[t+1]*L)
+            N[t] = Z.transpose()*np.linalg.inv(F[t+1])*Z + L*N[t+1]*L
 
-            alpha[t+1] = a[t+1] + r[t]*P[t+1].transpose()
+            alpha[t+1] = a[t+1] + np.dot(r[t],P[t+1].transpose())
             V[t+1] = P[t+1] - P[t+1]*N[t]*P[t+1]
             
         return a, P, v, F, K, alpha, V, r, N
