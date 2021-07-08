@@ -1,4 +1,4 @@
-# KFS
+# Introduction
 
 This package provides a class for state space models. Upon specification of a state space model, it is possible to
 use the kalman filter and kalman smoother. The package provides support for estimating the parameters by maximum likelihood.
