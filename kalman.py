@@ -4,10 +4,8 @@ Created on Fri Jun  4 11:07:16 2021
 
 @author: arnep
 """
-import pandas as pd
 from scipy import optimize
 import numpy as np
-import matplotlib.pyplot as plt
  
 
 def dim_check(T, R, Z, Q, H, c, d):
@@ -36,6 +34,7 @@ def convert_matrix(*args):
     for el in args:
         el = np.matrix(el)
     return args
+
 
 
 
@@ -98,7 +97,7 @@ class state_spacer():
             if d is None: 
                 self.init_matr['d'] = np.zeros((states, 1))
             else:
-                self.matrices['d'] = d
+                self.init_matr['d'] = d
 
         else: 
             print("error: dimensions don't match")
@@ -131,25 +130,13 @@ class state_spacer():
             matr[el] = np.matrix(matr[el][:,:,t])
         return matr
 
-
-    def kalman_filter(self, syst_matr, filter_init):
-        """
-        Kalman filter recursions, based on the system matrices and the initialisation
-        of the filter given. It first gets the processed matrices by calling 
-        the helper functions, initialises the output arrays, and then 
-        applies the filter by the following equations:
-            
-        v_t = y_t - Z_t*a_t - c_t
-        F_t = Z_t*P_t* Z_t' +  H_t
-        K_t = T_t*P_t*Z_t'*F_t-1
-        a_{t+1} = T_t* a_t + K_t*v_t + d
-        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
-        """
-        matrices, list_3d = self.get_matrices(syst_matr)
-        time = len(self.y)
+    def kalman_init(self, filter_init, time):
+    
         a_init = np.matrix(filter_init[0])
         P_init = np.matrix(filter_init[1])
-
+    
+        at   = np.zeros((time, a_init.shape[0], a_init.shape[1]))
+        Pt   = np.zeros((time, P_init.shape[0], P_init.shape[1]))
         a    = np.zeros((time + 1, a_init.shape[0], a_init.shape[1]))
         P    = np.zeros((time + 1, P_init.shape[0], P_init.shape[1]))
         F    = np.zeros((time    , self.y.shape[1], self.y.shape[1]))
@@ -157,25 +144,148 @@ class state_spacer():
         v    = np.zeros((time    , self.y.shape[1], 1))
         a[0,:] = a_init
         P[0,:] = P_init
-
-        for t in range(time):
-            matr = self.transit_syst_matrix(list_3d, t, matrices.copy())
-            T, R, Z, Q, H, c, d = matr['T'], matr['R'],  matr['Z'], matr['Q'], matr['H'], matr['c'], matr['d']   
-            yt = y[t]
-            #v and a are transposed
-            v[t] = yt -a[t]*Z.transpose() - c.transpose() 
-
-            #F, P and K are not transposed
-            F[t]   = Z*P[t]*Z.transpose() + H
-            K[t]   = T*P[t]*Z.transpose()*np.linalg.inv(F[t])
-
-            a[t+1] = a[t]*T.transpose() + v[t]*K[t].transpose() + d.transpose()
-            P[t+1] = T*P[t]*T.transpose() + R*Q*R.transpose() - K[t]*F[t]*K[t].transpose()
- 
-        return a, P, v, F, K
+        return at, Pt, a, P, F, K, v
     
     
-    def smoother(self, syst_matr, filter_init):
+    def kalman_filter_iteration(self, yt, a, P, Z, T, c, d, H, Q, R, 
+                                v, F, att, Ptt ):
+        """
+        v_t = y_t - Z_t*a_t - c_t
+        F_t = Z_t*P_t* Z_t' +  H_t
+        K_t = T_t*P_t*Z_t'*F_t-1
+        a_{t+1} = T_t* a_t + K_t*v_t + d
+        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+        """
+        
+        #v and a are transposed
+        v = yt -a*Z.transpose() - c.transpose() 
+    
+        #F, P and K are not transposed
+        F = Z*P*Z.transpose() + H
+        M = P*Z.transpose()*np.linalg.inv(F)
+        K = T*M
+        
+        att = a + v*M.transpose()
+        Ptt = P - M.transpose()*P*M
+        
+        at1 = a*T.transpose() + v*K.transpose() + d.transpose()
+        Pt1 = T*P*T.transpose() + R*Q*R.transpose() - K*F*K.transpose()
+        
+        return v, F, K, att, Ptt, at1, Pt1, c, d
+
+
+    def kalman_filter_iteration_missing(self, yt, a, P, Z, T, c, d, H, Q, R,
+                                v, F, att, Ptt, tol = 1e7 ):
+        """
+        v_t = y_t - Z_t*a_t - c_t
+        F_t = Z_t*P_t* Z_t' +  H_t
+        K_t = T_t*P_t*Z_t'*F_t-1
+        a_{t+1} = T_t* a_t + K_t*v_t + d
+        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+        """
+        
+        #v and a are transposed
+        v = yt
+    
+        #F, P and K are not transposed
+        F = np.matrix(np.ones(H.shape)*tol)
+        M = np.matrix(np.zeros((P*Z.transpose()*np.linalg.inv(F)).shape))
+        K = T*M
+        
+        att = a 
+        Ptt = P
+        
+        at1 = a*T.transpose() + d.transpose()
+        Pt1 = T*P*T.transpose() + R*Q*R.transpose() 
+        
+        return v, F, K, att, Ptt, at1, Pt1, c, d
+
+
+    def create_empty_objs(self, yt, H, at, Pt):
+        v_obj = np.zeros(yt.shape)
+        F_obj = np.zeros(H.shape)
+        att_obj = np.zeros(at.shape)
+        Ptt_obj = np.zeros(Pt.shape)
+        return v_obj, F_obj, att_obj, Ptt_obj
+
+
+    def kalman_filter(self, syst_matr, filter_init, other_data = None):
+        """
+        Kalman filter recursions, based on the system matrices and the initialisation
+        of the filter given. It first gets the processed matrices by calling 
+        the helper functions, initialises the output arrays, and then 
+        applies the filter.
+        """
+        if other_data is not None:
+            y_data = other_data
+        else: 
+            y_data = self.y
+            
+        time = len(y_data)
+
+        matrices, list_3d = self.get_matrices(syst_matr)
+        
+        at, Pt, a, P, F, K, v = self.kalman_init( filter_init, time)
+        
+        t = 0
+        T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
+        
+        yt = np.zeros(y_data[t].shape)   
+        
+        newC = np.zeros((self.init_matr['c'].shape[0], self.init_matr['c'].shape[1], time))
+        newD = np.zeros((self.init_matr['d'].shape[0], self.init_matr['c'].shape[1], time ))
+
+        v_obj, F_obj, att_obj, Ptt_obj = self.create_empty_objs(yt, H, a[t], P[t])
+                
+        if np.isnan(np.sum(y_data)):
+            for t in range(time):
+                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
+                yt = y_data[t]
+                
+                if not np.isnan(yt):
+                    v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
+                                                                                                                    v_obj, F_obj, att_obj, Ptt_obj )
+                else:
+                    v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration_missing(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
+                                                                                                                                v_obj, F_obj, att_obj, Ptt_obj )
+  
+        else: 
+            for t in range(time):
+                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
+                yt = y_data[t]
+                
+                v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
+                                                                                                                    v_obj, F_obj, att_obj, Ptt_obj )
+                                                                                                                        
+        return at, Pt, a, P, v, F, K, newC, newD
+    
+        
+    
+    def smoothing_iteration(self, v, F, r, T, K, Z, N, P, a):
+        L = T - K*Z
+        r= v*np.linalg.inv(F).transpose()*Z + (r*L)
+        N = Z.transpose()*np.linalg.inv(F)*Z + L*N*L
+        alpha = a + np.dot(r,P.transpose())
+        V = P - P*N*P
+        return L, r, N, alpha, V
+
+
+    def smoothing_iteration_missing(self, v, F, r, T, K, Z, N, P, a):    
+        L = T 
+        r= r*L
+        N = L*N*L
+        alpha = a + np.dot(r,P.transpose())
+        V = P - P*N*P
+        return L, r, N, alpha, V
+
+
+    def get_syst_matrices(self, list_3d, t, matrices):
+        matr = self.transit_syst_matrix(list_3d, t, matrices.copy())
+        T, R, Z, Q, H, c, d = matr['T'], matr['R'],  matr['Z'], matr['Q'], matr['H'], matr['c'], matr['d']   
+        return T, R, Z, Q, H, c, d
+    
+        
+    def smoother(self, syst_matr, filter_init, other_data = None):
         """
         Kalman smoothing recursions, based on the system matrices and the initialisation
         of the filter given. It first gets the processed matrices by calling 
@@ -183,16 +293,18 @@ class state_spacer():
         Kalman filter and uses this to calculate the smoothing recursions. These
         are given by: 
             
-        
         r_t = v_t*(F_{t+1}^-1)'*Z_t + r{t+1}*L{t+1}
         N_t = Z'*F_{t+1}^-1*Z_t + L{t+1}*N{t+1}*L{t+1}
         alpha{t+1} = a{t+1} + r[t]*P{t+1}'
         V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
-        
         """
 
         matrices, list_3d = self.get_matrices(syst_matr)
-        a, P, v, F, K = self.kalman_filter(syst_matr, filter_init)
+        if other_data is not None:
+            at, Pt, a, P, v, F, K, newC, newD = self.kalman_filter(syst_matr, filter_init, other_data)
+
+        else: 
+            at, Pt, a, P, v, F, K, newC, newD = self.kalman_filter(syst_matr, filter_init)
         
         r = np.zeros((a.shape))
         r[:] = np.nan
@@ -200,27 +312,42 @@ class state_spacer():
         N[:] = np.nan
         r[len(a)-2] = 0
         N[len(a)-2] = 0
-        
         alpha = np.zeros(a.shape)
         alpha[:] = np.nan
         V = np.zeros(P.shape)
         V[:] = np.nan
         
         r, N, alpha, V = r[:len(r)-1], N[:len(N)-1], alpha[:len(alpha)-1], V[:len(V)-1]
-        for t in range(len(a)-3, -2,-1):
-            matr = self.transit_syst_matrix(list_3d, t, matrices.copy())
-            Z = matr['Z']
-            T = matr['T']
-            
-            L = T - K[t+1]*Z
+        if np.isnan(np.sum(v)):
+            for t in range(len(a)-3, -1,-1):
+                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+                
+                if not np.isnan(v[t+1]):
+                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+                else: 
+                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+               
+            t = - 1
+            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+    
+            if not np.isnan(v[t+1]):
+                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+            else: 
+                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+   
+        else: 
+            for t in range(len(a)-3, -1,-1):
+                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+                
+                L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
 
-            r[t] = v[t+1]*np.linalg.inv(F[t+1]).transpose()*Z + (r[t+1]*L)
-            N[t] = Z.transpose()*np.linalg.inv(F[t+1])*Z + L*N[t+1]*L
+            t = - 1
+            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+                
+            _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
 
-            alpha[t+1] = a[t+1] + np.dot(r[t],P[t+1].transpose())
-            V[t+1] = P[t+1] - P[t+1]*N[t]*P[t+1]
-            
-        return a, P, v, F, K, alpha, V, r, N
+
+        return at, Pt, a, P, v, F, K, alpha, V, r, N
     
     
     def kalman_llik_diffuse(self,param, matr, param_loc, filter_init):
@@ -236,19 +363,20 @@ class state_spacer():
         for key in param_loc.keys():
             syst_matr[param_loc[key]['matrix']][param_loc[key]['row'],param_loc[key]['col']] = param[key]
         
-        print(syst_matr)
-        
         #apply Kalman Filter
-        a, P, v, F, K  =  self.kalman_filter(syst_matr, filter_init)
+        at, Pt, a, P, v, F, K, newC, newD  =  self.kalman_filter(syst_matr, filter_init)
         
         #first element not used in diffuse likeilhood
         v = v[1:,:,:]
         F = F[1:,:,:]
-
+        
+        v_temp = v.copy()
+        v_temp[np.isnan(v_temp)] = 0
+        
         n = len(v)
         accum = 0
         for i in range(n):
-            accum += v[i]*np.linalg.inv(F[i])*v[i].transpose()
+            accum += v_temp[i]*np.linalg.inv(F[i])*v_temp[i].transpose()
 
         #log likelihood function: -n/2 * log(2*pi) - 1/2*sum(log(F_t) + v_t^2/F_t)
         l = -(n / 2) * np.log(2 * np.pi) - (1 / 2) * (np.log(np.linalg.det(F)).sum()) - (1 / 2) * (
@@ -284,4 +412,6 @@ class state_spacer():
         print('AIC: ' +str(results['AIC']))
 
         return results
+
+    
 
