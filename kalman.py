@@ -39,7 +39,7 @@ def convert_matrix(*args):
 
 
 class state_spacer():
-    def __init__(self, y,*matrices):
+    def __init__(self, *matrices):
         """
         Implementation of the following model:
             yt = c + Zt alphat + epst, epst ~ NID(0,H)
@@ -47,13 +47,12 @@ class state_spacer():
         
         define time-varying structural matrices in dimension (row, column, time)
         """
-        self.y = y
         self.init_state_matrices(*matrices)
-        self.init_matrices = True
-        
+        self.fitted = False
+
 
     def init_state_matrices(self, T=None, R=None, Z=None, Q=None, H=None, 
-                            c=None, d=None, states = 1, eta_size = 1):
+                            c=None, d=None, y= None, y_dim =1, states = 1, eta_size = 1):
         """ 
         Sets the initial system matrices. When no matrices are specified, default
         initial system matrices are set. It is also possible to detremine the 
@@ -75,7 +74,11 @@ class state_spacer():
                 self.init_matr['R'] = R
                 
             if Z is None: 
-                self.init_matr['Z'] =  np.ones((self.y.shape[1], states))
+                if y is not None: 
+                    self.init_matr['Z'] =  np.ones((y.shape[1], states))
+                else:
+                    self.init_matr['Z'] =  np.ones((y_dim, states))
+
             else:
                 self.init_matr['Z'] = Z
                 
@@ -85,12 +88,20 @@ class state_spacer():
                 self.init_matr['Q'] = Q
                 
             if H is None: 
-                self.init_matr['H'] = np.eye(self.y.shape[1])
+                if y is not None: 
+                    self.init_matr['H'] = np.eye(y.shape[1])
+                else:
+                    self.init_matr['H'] = np.eye(y_dim)
+                    
             else:
                 self.init_matr['H'] = H
 
             if c is None: 
-                self.init_matr['c'] = np.zeros((self.y.shape[1], 1))
+                if y is not None: 
+                    self.init_matr['c'] = np.zeros((y.shape[1], 1))
+                else:
+                    self.init_matr['c'] = np.zeros((y_dim, 1))
+
             else:
                 self.init_matr['c'] = c
 
@@ -99,6 +110,7 @@ class state_spacer():
             else:
                 self.init_matr['d'] = d
 
+        
         else: 
             print("error: dimensions don't match")
             
@@ -130,8 +142,11 @@ class state_spacer():
             matr[el] = np.matrix(matr[el][:,:,t])
         return matr
 
-    def kalman_init(self, filter_init, time):
-    
+
+    def kalman_init(self,y, filter_init, time):
+        """Helper function, which defines all the necessary output matrices and 
+        initialises."""
+        
         a_init = np.matrix(filter_init[0])
         P_init = np.matrix(filter_init[1])
     
@@ -139,9 +154,9 @@ class state_spacer():
         Pt   = np.zeros((time, P_init.shape[0], P_init.shape[1]))
         a    = np.zeros((time + 1, a_init.shape[0], a_init.shape[1]))
         P    = np.zeros((time + 1, P_init.shape[0], P_init.shape[1]))
-        F    = np.zeros((time    , self.y.shape[1], self.y.shape[1]))
-        K    = np.zeros((time    , a_init.shape[1], self.y.shape[1]))
-        v    = np.zeros((time    , self.y.shape[1], 1))
+        F    = np.zeros((time    , y.shape[1], y.shape[1]))
+        K    = np.zeros((time    , a_init.shape[1], y.shape[1]))
+        v    = np.zeros((time    , y.shape[1], 1))
         a[0,:] = a_init
         P[0,:] = P_init
         return at, Pt, a, P, F, K, v
@@ -150,6 +165,8 @@ class state_spacer():
     def kalman_filter_iteration(self, yt, a, P, Z, T, c, d, H, Q, R, 
                                 v, F, att, Ptt ):
         """
+        Normal Kalman iteration
+        
         v_t = y_t - Z_t*a_t - c_t
         F_t = Z_t*P_t* Z_t' +  H_t
         K_t = T_t*P_t*Z_t'*F_t-1
@@ -177,11 +194,13 @@ class state_spacer():
     def kalman_filter_iteration_missing(self, yt, a, P, Z, T, c, d, H, Q, R,
                                 v, F, att, Ptt, tol = 1e7 ):
         """
-        v_t = y_t - Z_t*a_t - c_t
-        F_t = Z_t*P_t* Z_t' +  H_t
-        K_t = T_t*P_t*Z_t'*F_t-1
-        a_{t+1} = T_t* a_t + K_t*v_t + d
-        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+        Kalman iteration function in case the observation is missing.
+        
+        v_t = undefined
+        F_t = infinity
+        K_t = 0
+        a_{t+1} = T_t* a_t + d
+        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t'
         """
         
         #v and a are transposed
@@ -202,6 +221,9 @@ class state_spacer():
 
 
     def create_empty_objs(self, yt, H, at, Pt):
+        """Helper function to create certain empty objects, which are later 
+        used in the code.
+        """
         v_obj = np.zeros(yt.shape)
         F_obj = np.zeros(H.shape)
         att_obj = np.zeros(at.shape)
@@ -209,38 +231,36 @@ class state_spacer():
         return v_obj, F_obj, att_obj, Ptt_obj
 
 
-    def kalman_filter(self, syst_matr, filter_init, other_data = None):
+    def kalman_filter(self, y, filter_init, syst_matr = None):
         """
         Kalman filter recursions, based on the system matrices and the initialisation
         of the filter given. It first gets the processed matrices by calling 
         the helper functions, initialises the output arrays, and then 
         applies the filter.
         """
-        if other_data is not None:
-            y_data = other_data
-        else: 
-            y_data = self.y
             
-        time = len(y_data)
-
+        time = len(y)
+        if syst_matr is None:
+            syst_matr = self.init_matr
+        
         matrices, list_3d = self.get_matrices(syst_matr)
         
-        at, Pt, a, P, F, K, v = self.kalman_init( filter_init, time)
+        at, Pt, a, P, F, K, v = self.kalman_init(y, filter_init, time)
         
         t = 0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
         
-        yt = np.zeros(y_data[t].shape)   
+        yt = np.zeros(y[t].shape)   
         
         newC = np.zeros((self.init_matr['c'].shape[0], self.init_matr['c'].shape[1], time))
         newD = np.zeros((self.init_matr['d'].shape[0], self.init_matr['c'].shape[1], time ))
 
         v_obj, F_obj, att_obj, Ptt_obj = self.create_empty_objs(yt, H, a[t], P[t])
                 
-        if np.isnan(np.sum(y_data)):
+        if np.isnan(np.sum(y)):
             for t in range(time):
                 T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
-                yt = y_data[t]
+                yt = y[t]
                 
                 if not np.isnan(yt):
                     v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
@@ -252,14 +272,13 @@ class state_spacer():
         else: 
             for t in range(time):
                 T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
-                yt = y_data[t]
+                yt = y[t]
                 
                 v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
                                                                                                                     v_obj, F_obj, att_obj, Ptt_obj )
-                                                                                                                        
+                                                                                                                            
         return at, Pt, a, P, v, F, K, newC, newD
     
-        
     
     def smoothing_iteration(self, v, F, r, T, K, Z, N, P, a):
         L = T - K*Z
@@ -285,7 +304,7 @@ class state_spacer():
         return T, R, Z, Q, H, c, d
     
         
-    def smoother(self, syst_matr, filter_init, other_data = None):
+    def smoother(self, y, filter_init):
         """
         Kalman smoothing recursions, based on the system matrices and the initialisation
         of the filter given. It first gets the processed matrices by calling 
@@ -298,14 +317,11 @@ class state_spacer():
         alpha{t+1} = a{t+1} + r[t]*P{t+1}'
         V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
         """
-
-        matrices, list_3d = self.get_matrices(syst_matr)
-        if other_data is not None:
-            at, Pt, a, P, v, F, K, newC, newD = self.kalman_filter(syst_matr, filter_init, other_data)
-
-        else: 
-            at, Pt, a, P, v, F, K, newC, newD = self.kalman_filter(syst_matr, filter_init)
         
+        matrices, list_3d = self.get_matrices(self.init_matr)
+        at, Pt, a, P, v, F, K, newC, newD =self.kalman_filter(y, filter_init)
+        
+
         r = np.zeros((a.shape))
         r[:] = np.nan
         N = np.zeros((P.shape))
@@ -350,7 +366,7 @@ class state_spacer():
         return at, Pt, a, P, v, F, K, alpha, V, r, N
     
     
-    def kalman_llik_diffuse(self,param, matr, param_loc, filter_init):
+    def kalman_llik_diffuse(self,param, y, matr, param_loc, filter_init):
         """
         Diffuse loglikelihood function for the Kalman filter system matrices. 
         The function allows for specification of the elements in the system matrices
@@ -362,9 +378,9 @@ class state_spacer():
         #get the elements which are optimised in the ML function
         for key in param_loc.keys():
             syst_matr[param_loc[key]['matrix']][param_loc[key]['row'],param_loc[key]['col']] = param[key]
-        
+
         #apply Kalman Filter
-        at, Pt, a, P, v, F, K, newC, newD  =  self.kalman_filter(syst_matr, filter_init)
+        at, Pt, a, P, v, F, K, newC, newD  =  self.kalman_filter(y, filter_init, syst_matr)
         
         #first element not used in diffuse likeilhood
         v = v[1:,:,:]
@@ -385,7 +401,7 @@ class state_spacer():
         return llik
         
     
-    def ml_estimator_matrix(self, fun, matr, param_loc, filter_init, param_init,
+    def ml_estimator_matrix(self, y, fun, matr, param_loc, filter_init, param_init,
                             bnds, method = 'L-BFGS-B',
                             options = {'eps': 1e-07,'disp': True,'maxiter': 200}):
         """ MLE estimator which optimises the likelihood function given, based on 
@@ -393,7 +409,7 @@ class state_spacer():
         a method """          
         
         #make object with all arguments together              
-        args = (matr, param_loc, filter_init)
+        args = (y, matr, param_loc, filter_init)
 
         #prepare initialisation
         param_init = np.array( list(param_init.values()))
@@ -412,6 +428,59 @@ class state_spacer():
         print('AIC: ' +str(results['AIC']))
 
         return results
-
     
+    
+    def fit(self, y, fun, param_loc, filter_init, param_init,
+                  bnds, method = 'L-BFGS-B',
+                  options = {'eps': 1e-07,'disp': True,'maxiter': 200}):
+        
+        syst_matr = self.init_matr
+        
+        res = self.ml_estimator_matrix( y, fun, syst_matr, param_loc,
+                                       filter_init, param_init,
+                            bnds, method = method, options = options)
+        
+        
+        param = res.x
 
+        #get the elements which are optimised in the ML function
+        for key in param_loc.keys():
+            syst_matr[param_loc[key]['matrix']][param_loc[key]['row'],param_loc[key]['col']] = param[key]
+        
+        for key in self.init_matr.keys():
+            self.init_matr[key] = syst_matr[key]
+            
+        self.fitted = True
+
+        return self
+
+"""    
+    def disturbance_smoothing_errors(self, ):
+        # initialise dataframe
+        v, F, K, r, N = self.res['v'], self.res['F'],self.res['K'], self.res['r'], self.res['N']
+        
+        # calculate u = v_t/F_t - K_t*r_t
+        u = v * np.linalg.inv(F) - K * r
+    
+        # calculate D_t = 1/F_t + K_t^2 * N_t
+        D = 1 * np.linalg.inv(F) + (K ** 2) * N
+    
+        # estimated epsilon_t= sigma2_epsilon * u_t
+        epsilon_hat = H  u
+    
+        # estimated conditional variance_t epsilon = sigma2_epsilon - D_t *sigma2_epsilon^2
+        var_epsilon_cond = sigma2_epsilon - temp['D'] * (sigma2_epsilon ** 2)
+    
+        # estimated eta_t= sigma2_eta * r_t
+        eta_hat = temp['r'] * sigma2_eta
+    
+        # estimated conditional variance_t eta = sigma2_eta - N_t *sigma2_eta^2
+        var_eta_cond = sigma2_eta - temp['N'] * (sigma2_eta ** 2)
+    
+        self.diagnostic['u'] = u
+        self.diagnostic['D'] = D
+        self.diagnostic['epsilon_hat'] = epsilon_hat
+        self.diagnostic['var_epsilon_cond'] = var_epsilon_cond
+        self.diagnostic['eta_hat'] = eta_hat
+        self.diagnostic['var_eta_cond'] = var_eta_cond
+"""

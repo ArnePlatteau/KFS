@@ -22,7 +22,7 @@ if __name__ == "__main__":
     y = np.append(y, period, axis = 0)
     
     #create state_space object
-    Nile_filter = state_spacer(y)
+    Nile_filter = state_spacer()
     
     #choose model specification
     simple_model = True
@@ -30,7 +30,6 @@ if __name__ == "__main__":
     if simple_model:
         #set the function and initialisation of the matrices
         fun = Nile_filter.kalman_llik_diffuse
-        matr = Nile_filter.init_matr
         
         #choose which elements to use in MLE
         param_loc = {
@@ -47,23 +46,19 @@ if __name__ == "__main__":
         
         #test time-varying functionality by setting Q in a time-varying way
         Q = np.ones((1,1,len(y)))
-        Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=Q, H=np.array([1]), 
-                                        c=None, d=None, states = 1, eta_size = 1)
-    
+        #Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=Q, H=np.array([1]), 
+        Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=None, H=None, 
+                                        c=None, d=None, y=y, states = 1, eta_size = 1)
+
         #estimate MLE parameters
         bnds = ((1, 50000),(1, 50000))
-        est =  Nile_filter.ml_estimator_matrix(fun, matr, param_loc, filter_init, param_init, bnds)
+        Nile_filter.fit(y, fun, param_loc, filter_init, param_init, bnds)
     
-        #get output
-        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(Nile_filter.init_matr,filter_init, y)
-        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(Nile_filter.init_matr,filter_init, y)
-
-    
-        y = y[:70]
 
         #get output
-        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(Nile_filter.init_matr,filter_init, y)
-        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(Nile_filter.init_matr,filter_init, y)
+        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(y, filter_init)
+        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(y, filter_init)
+
         
     else:
         #set the function
@@ -88,22 +83,19 @@ if __name__ == "__main__":
     
         #set initial matrices
         Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=None, H= None, 
-                                    c=None, d=None, states = 2, eta_size = 2)
+                                    c=None, d=None, y= y, states = 2, eta_size = 2)
         matr = Nile_filter.init_matr
     
 
         #estimate MLE parameters
         bnds = ((1, 50000),(1, 50000),(1, 50000), (-.999,.999))
-        est =  Nile_filter.ml_estimator_matrix(fun, matr, param_loc, filter_init, param_init, bnds)
+        Nile_filter.fit(y, fun, param_loc, filter_init, param_init, bnds)
     
 
         #get output
-        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(Nile_filter.init_matr,filter_init)
-        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(Nile_filter.init_matr,filter_init)
+        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(y, filter_init)
+        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(y, filter_init)
 
-        y = y[:70]
-        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(Nile_filter.init_matr,filter_init)
-        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(Nile_filter.init_matr,filter_init)
     #plot data and filtered and smoothed values    
     plt.figure(figsize=(10, 6), dpi=200)
     plt.plot(at[:,:].sum(axis=2), label =  'Filtered state')

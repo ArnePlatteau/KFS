@@ -9,9 +9,12 @@ from kalman import state_spacer as StateSpacer
 import numpy as np
 
 class eStateSpacer(StateSpacer):
-    def __init__(self, y, ZFun, ZDotFun, TFun, TDotFun, ZArgs = {}, ZDotArgs = {},
-                 TArgs = {}, TDotArgs = {},
-                 *matrices):
+    """Class which implements the extended Kalman Filter. This technique 
+    uses a Taylor transformation
+    """
+    def __init__(self, ZFun, ZDotFun, TFun, TDotFun, ZArgs = {}, ZDotArgs = {},
+                 TArgs = {}, TDotArgs = {}, *matrices
+                 ):
         self.ZFun = ZFun
         self.ZDotFun = ZDotFun
         self.TFun = TFun
@@ -21,8 +24,7 @@ class eStateSpacer(StateSpacer):
         self.ZDotArgs = ZDotArgs
         self.TArgs = TArgs
         self.TDotArgs = TDotArgs
-        super().__init__( y,*matrices)
-        
+        super().__init__(*matrices)
 
     def get_Z(self, x, *args):
         return np.matrix(self.ZFun(x, *args, **self.ZArgs))
@@ -42,6 +44,14 @@ class eStateSpacer(StateSpacer):
 
     def kalman_filter_iteration(self, yt, a, P, Z, T, c, d, H, Q, R,
                                 v, F, att, Ptt):
+        """
+        v_t = y_t - Z_t*a_t - c_t
+        F_t = Z_t*P_t* Z_t' +  H_t
+        K_t = T_t*P_t*Z_t'*F_t-1
+        a_{t+1} = T_t* a_t + K_t*v_t + d
+        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+        """
+
         Z_new = np.matrix(self.get_Z_dot(a, Z))
 
         c = np.matrix(c + self.get_Z(a, Z) - a*self.get_Z_dot(a, Z).transpose())
