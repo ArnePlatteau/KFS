@@ -135,23 +135,23 @@ bnds = ((1, 50000),(1, 50000) )
 QuadFilter.fit(y, fun, param_loc, filter_init, param_init, bnds)
 
 #get output
-at, Pt, a, P, v, F, K, newC, newD = QuadFilter.kalman_filter(y, filter_init)
-at, Pt, a, P, v, F, K, alpha, V, r, N = QuadFilter.smoother(y, filter_init)
+output = QuadFilter.kalman_filter(y, filter_init)
+output_smooth = QuadFilter.smoother(y, filter_init)
 
 
 #do not plot first observations 
 first = 1
 #plot data and filtered and smoothed values    
 plt.figure(figsize=(10, 6), dpi=200)
-plt.plot(at[first:,:].sum(axis=2)**2, label =  'Filtered signal')
-plt.plot(alpha[first:,:].sum(axis=2)**2, label = 'Smoothed signal')
+plt.plot(output_smooth["at"][first:,:].sum(axis=2)**2, label =  'Filtered signal')
+plt.plot(output_smooth["alpha"][first:,:].sum(axis=2)**2, label = 'Smoothed signal')
 plt.scatter(range(len(y) - first),y[first:] ,  alpha = 0.3, label = 'Observation')
 plt.legend()
 plt.show()
 
 plt.figure(figsize=(10, 6), dpi=200)
-plt.plot(at[first:,:].sum(axis=2), label =  'Filtered state')
-plt.plot(alpha[first:,:].sum(axis=2), label = 'Smoothed state')
+plt.plot(output_smooth["at"][first:,:].sum(axis=2), label =  'Filtered state')
+plt.plot(output_smooth["alpha"][first:,:].sum(axis=2), label = 'Smoothed state')
 plt.scatter(range(len(a_array)-first), np.abs(a_array[first:]) ,  alpha = 0.3, label = 'State')
 plt.legend()
 plt.show()

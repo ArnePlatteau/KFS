@@ -56,8 +56,7 @@ if __name__ == "__main__":
     
 
         #get output
-        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(y, filter_init)
-        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(y, filter_init)
+        output = Nile_filter.smoother(y, filter_init)
 
         
     else:
@@ -84,7 +83,6 @@ if __name__ == "__main__":
         #set initial matrices
         Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=None, H= None, 
                                     c=None, d=None, y= y, states = 2, eta_size = 2)
-        matr = Nile_filter.init_matr
     
 
         #estimate MLE parameters
@@ -93,13 +91,12 @@ if __name__ == "__main__":
     
 
         #get output
-        at, Pt, a, P, v, F, K, _, _ = Nile_filter.kalman_filter(y, filter_init)
-        at, Pt, a, P, v, F, K, alpha, V, r, N = Nile_filter.smoother(y, filter_init)
+        output = Nile_filter.smoother(y, filter_init)
 
     #plot data and filtered and smoothed values    
     plt.figure(figsize=(10, 6), dpi=200)
-    plt.plot(at[:,:].sum(axis=2), label =  'Filtered state')
-    plt.plot(alpha[:,:].sum(axis=2), label = 'Smoothed state')
+    plt.plot(output["at"][:,:].sum(axis=2), label =  'Filtered state')
+    plt.plot(output["alpha"][:,:].sum(axis=2), label = 'Smoothed state')
     plt.scatter(range(len(y)), y, alpha = 0.3, label = 'Observations')
     plt.title('Nile volume: observations vs. filtered and smoothed states')
     plt.legend()

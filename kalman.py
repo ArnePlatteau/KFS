@@ -231,7 +231,7 @@ class state_spacer():
         return v_obj, F_obj, att_obj, Ptt_obj
 
 
-    def kalman_filter(self, y, filter_init, syst_matr = None):
+    def kalman_filter_base(self, y, filter_init, syst_matr):
         """
         Kalman filter recursions, based on the system matrices and the initialisation
         of the filter given. It first gets the processed matrices by calling 
@@ -240,8 +240,6 @@ class state_spacer():
         """
             
         time = len(y)
-        if syst_matr is None:
-            syst_matr = self.init_matr
         
         matrices, list_3d = self.get_matrices(syst_matr)
         
@@ -280,6 +278,11 @@ class state_spacer():
         return at, Pt, a, P, v, F, K, newC, newD
     
     
+    def kalman_filter(self, y, filter_init):
+        o = {}
+        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"]  =  self.kalman_filter_base(y, filter_init, self.init_matr)
+        return o
+        
     def smoothing_iteration(self, v, F, r, T, K, Z, N, P, a):
         L = T - K*Z
         r= v*np.linalg.inv(F).transpose()*Z + (r*L)
@@ -304,7 +307,7 @@ class state_spacer():
         return T, R, Z, Q, H, c, d
     
         
-    def smoother(self, y, filter_init):
+    def smoother_base(self, y, filter_init):
         """
         Kalman smoothing recursions, based on the system matrices and the initialisation
         of the filter given. It first gets the processed matrices by calling 
@@ -319,7 +322,7 @@ class state_spacer():
         """
         
         matrices, list_3d = self.get_matrices(self.init_matr)
-        at, Pt, a, P, v, F, K, newC, newD =self.kalman_filter(y, filter_init)
+        at, Pt, a, P, v, F, K, newC, newD =self.kalman_filter_base(y, filter_init, self.init_matr)
         
 
         r = np.zeros((a.shape))
@@ -363,9 +366,16 @@ class state_spacer():
             _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
 
 
-        return at, Pt, a, P, v, F, K, alpha, V, r, N
+        return at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N
     
     
+    def smoother(self,y, filter_init):
+        o = {}
+        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"]  =  self.smoother_base(y, filter_init)
+        return o
+        
+
+        
     def kalman_llik_diffuse(self,param, y, matr, param_loc, filter_init):
         """
         Diffuse loglikelihood function for the Kalman filter system matrices. 
@@ -380,7 +390,7 @@ class state_spacer():
             syst_matr[param_loc[key]['matrix']][param_loc[key]['row'],param_loc[key]['col']] = param[key]
 
         #apply Kalman Filter
-        at, Pt, a, P, v, F, K, newC, newD  =  self.kalman_filter(y, filter_init, syst_matr)
+        at, Pt, a, P, v, F, K, newC, newD  =  self.kalman_filter_base(y, filter_init, syst_matr)
         
         #first element not used in diffuse likeilhood
         v = v[1:,:,:]
