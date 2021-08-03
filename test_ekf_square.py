@@ -110,34 +110,27 @@ a_array[50:80] = np.nan
 QuadFilter = eStateSpacer(square_fun, square_der_fun, lin_fun, one_fun )
 
 #set the function
-fun = QuadFilter.kalman_llik_diffuse
-
-#choose which elements to use in MLE
-param_loc = {
-    0: {'matrix' :'Q', 'row' : 0, 'col' : 0} ,
-    1: {'matrix' :'H', 'row' : 0, 'col' : 0} ,
-             }
+kalman_llik = QuadFilter.kalman_llik_diffuse
 
 #initialise parameters and filter
 filter_init =  (10), (1e7)
-param_init= {
-    0:  1,
-    1:  1,
-    }
+param_init=  (1, 1)
 
 #set initial matrices
-QuadFilter.init_state_matrices( T= T, R=None, Z=None, Q=Q, H= H, 
+QuadFilter.init_matrices( T= T, R=None, Z=None, Q=Q, H= H, 
                             c=None, d=None, states = 1, eta_size = 1)
 
+QuadFilter.matr['Q'][0,0] = np.nan
+QuadFilter.matr['H'][0,0] = np.nan
 
 #estimate MLE parameters
 bnds = ((1, 50000),(1, 50000) )
-QuadFilter.fit(y, fun, param_loc, filter_init, param_init, bnds)
+QuadFilter.fit(y, kalman_llik=kalman_llik,
+                        filter_init=filter_init, param_init=param_init, bnds=bnds)
 
 #get output
-output = QuadFilter.kalman_filter(y, filter_init)
-output_smooth = QuadFilter.smoother(y, filter_init)
-
+o = QuadFilter.smoother(y, filter_init)
+output_smooth, errors_smooth = o['output'], o['errors']
 
 #do not plot first observations 
 first = 1

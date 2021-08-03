@@ -9,7 +9,6 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from kalman import state_spacer
-import math 
 
 #testing the functions
 if __name__ == "__main__":
@@ -25,73 +24,63 @@ if __name__ == "__main__":
     Nile_filter = state_spacer()
     
     #choose model specification
-    simple_model = True
+    simple_model = False
     
     if simple_model:
         #set the function and initialisation of the matrices
-        fun = Nile_filter.kalman_llik_diffuse
-        
-        #choose which elements to use in MLE
-        param_loc = {
-            0: {'matrix' : 'Q', 'row' : 0, 'col' : 0} ,
-            1: {'matrix' : 'H', 'row' : 0, 'col' : 0} 
-                     }
+        kalman_llik = Nile_filter.kalman_llik_diffuse
         
         #initialise parameters and filter
         filter_init =  (0), (1e7) 
-        param_init= {
-            0:  1,
-            1:  1
-            }
+        
+        
+        param_init = np.array((100,100))
         
         #test time-varying functionality by setting Q in a time-varying way
-        Q = np.ones((1,1,len(y)))
-        #Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=Q, H=np.array([1]), 
-        Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=None, H=None, 
+       # T = np.ones((1,1,len(y)))
+        Nile_filter.init_matrices( T=None, R=None, Z=None, Q=None, H=None, 
                                         c=None, d=None, y=y, states = 1, eta_size = 1)
 
+        Nile_filter.matr['Q'][0,0] = np.nan
+        Nile_filter.matr['H'][0,0] = np.nan
+
+
         #estimate MLE parameters
-        bnds = ((1, 50000),(1, 50000))
-        Nile_filter.fit(y, fun, param_loc, filter_init, param_init, bnds)
-    
+        bnds = ((0.1, 50000),(0.1, 50000))
+        Nile_filter.fit(y, kalman_llik=kalman_llik,
+                        filter_init=filter_init, param_init=param_init, bnds=bnds)
 
         #get output
-        output = Nile_filter.smoother(y, filter_init)
+        o = Nile_filter.smoother(y, filter_init)
+        output, errors = o['output'], o['errors']
 
-        
     else:
         #set the function
-        fun = Nile_filter.kalman_llik_diffuse
-        
-        #choose which elements to use in MLE
-        param_loc = {
-            0: {'matrix' :'Q', 'row' : 0, 'col' : 0} ,
-            1: {'matrix' :'Q', 'row' : 1, 'col' : 1} ,
-            2: {'matrix' :'H', 'row' : 0, 'col' : 0} ,
-            3: {'matrix' :'T', 'row' : 0, 'col' : 0} 
-                     }
-        
+        kalman_llik = Nile_filter.kalman_llik_diffuse
+                
         #initialise parameters and filter
         filter_init =  (0,0), ((1e7,0), (0,1e7))
-        param_init= {
-            0:  1,
-            1:  3,
-            2:  5,
-            3:  0.5
-            }
-    
+
+        param_init= (0.5, 1, 3, 5)
+
         #set initial matrices
-        Nile_filter.init_state_matrices( T=None, R=None, Z=None, Q=None, H= None, 
+        Nile_filter.init_matrices( T=None, R=None, Z=None, Q=None, H= None, 
                                     c=None, d=None, y= y, states = 2, eta_size = 2)
-    
-
+        
+        Nile_filter.matr['T'][0,0] = np.nan
+        Nile_filter.matr['Q'][1,0] = np.nan
+        Nile_filter.matr['H'][0,0] = np.nan
+        Nile_filter.matr['Q'][0,0] = np.nan
+        
         #estimate MLE parameters
-        bnds = ((1, 50000),(1, 50000),(1, 50000), (-.999,.999))
-        Nile_filter.fit(y, fun, param_loc, filter_init, param_init, bnds)
-    
+        bnds = ((-.999,.999), (4000, 5000), (12, 16),(180, 200))
 
+        Nile_filter.fit(y, kalman_llik=kalman_llik,
+                        filter_init=filter_init, param_init=param_init, bnds=bnds)
+    
         #get output
-        output = Nile_filter.smoother(y, filter_init)
+        o = Nile_filter.smoother(y, filter_init)
+        output, errors = o['output'], o['errors']
 
     #plot data and filtered and smoothed values    
     plt.figure(figsize=(10, 6), dpi=200)
@@ -102,4 +91,20 @@ if __name__ == "__main__":
     plt.legend()
     plt.show()
     
+    
+    #plot data and filtered and smoothed values    
+    plt.figure(figsize=(10, 6), dpi=200)
+    plt.plot(errors["epsilon_hat"][:,:].sum(axis=2))
+    plt.title('Epsilon hat')
+    plt.show()
+    
+    #plot data and filtered and smoothed values    
+    plt.figure(figsize=(10, 6), dpi=200)
+    plt.plot(errors["eta_hat"][:,:].sum(axis=2))
+    plt.title('Eta hat')
+    plt.show()
+
+    Nile_filter.save_json("Nile_filter.json")
+    dummy = state_spacer()
+    dummy.load_json("Nile_filter.json")
     

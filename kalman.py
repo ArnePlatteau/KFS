@@ -6,7 +6,49 @@ Created on Fri Jun  4 11:07:16 2021
 """
 from scipy import optimize
 import numpy as np
+import json
  
+def llik_gaussian(v, F):
+    v_temp = v.copy()
+    v_temp[np.isnan(v_temp)] = 0
+    
+    n = len(v)
+    accum = 0
+    for i in range(n):
+        accum += v_temp[i]*np.linalg.inv(F[i])*v_temp[i].transpose()
+
+    #log likelihood function: -n/2 * log(2*pi) - 1/2*sum(log(F_t) + v_t^2/F_t)
+    l = -(n / 2) * np.log(2 * np.pi) - (1 / 2) * (np.log(np.linalg.det(F)).sum()) - (1 / 2) * (
+            accum)
+    llik = -np.mean(l)
+    return llik
+
+
+def ml_estimator_matrix( y, matr, param_loc, kalman_llik, filter_init, param_init,
+                            bnds,  method = 'L-BFGS-B',
+                            options = {'eps': 1e-07,'disp': True,'maxiter': 200}, **llik_kwargs):
+        """ MLE estimator which optimises the likelihood function given, based on 
+        initialisation of both the filter and the parameters, bounds, and
+        a method """          
+        
+        #make object with all arguments together              
+        args = (y, matr, param_loc, filter_init, llik_kwargs)
+
+        #optimize log_likelihood 
+        results = optimize.minimize(kalman_llik, param_init,
+                                          options=options, args = args,
+                                          method=method, bounds=bnds)
+        
+        #print the parameters and the AIC
+        estimates = results.x
+        results['llik'] = -results.fun
+        results['AIC'] = 2*len(param_init) - results['llik']
+        print('params: ' + str(estimates))
+        print('likelihood: ' +str( results['llik'] ))
+        print('AIC: ' +str(results['AIC']))
+
+        return results
+
 
 def dim_check(T, R, Z, Q, H, c, d):
     """Returns true if the dimensions are okay """
@@ -22,7 +64,7 @@ def collect_3d(dict_syst_matr):
 
     list_3d = list()
     for key in dict_syst_matr.keys():
-        if len(dict_syst_matr[key].shape) ==3:
+        if len(dict_syst_matr[key].shape) >2:
             list_3d.append(key)
     return list_3d
 
@@ -47,11 +89,13 @@ class state_spacer():
         
         define time-varying structural matrices in dimension (row, column, time)
         """
-        self.init_state_matrices(*matrices)
+        self.init_matrices(*matrices)
+        self.fit_parameters = {}
+        self.fit_results = {}
         self.fitted = False
 
 
-    def init_state_matrices(self, T=None, R=None, Z=None, Q=None, H=None, 
+    def init_matrices(self, T=None, R=None, Z=None, Q=None, H=None, 
                             c=None, d=None, y= None, y_dim =1, states = 1, eta_size = 1):
         """ 
         Sets the initial system matrices. When no matrices are specified, default
@@ -62,54 +106,57 @@ class state_spacer():
         if dim_check(T, R, Z, Q, H, c, d):
             #check to see if the matrices given have valid dimensions 
             
-            self.init_matr = {}
+            self.matr = {}
             if T is None: 
-                self.init_matr['T'] = np.eye((states))
+                self.matr['T'] = np.eye((states))
             else:
-                self.init_matr['T'] = T
+                self.matr['T'] = np.array(T)
+            self.matr['T'] = self.matr['T'].astype(float)
             
             if R is None: 
-                self.init_matr['R'] = np.ones((states, eta_size))
+                self.matr['R'] = np.ones((states, eta_size))
             else:
-                self.init_matr['R'] = R
-                
+                self.matr['R'] = np.array(R)
+            self.matr['R'] = self.matr['R'].astype(float)
+            
             if Z is None: 
                 if y is not None: 
-                    self.init_matr['Z'] =  np.ones((y.shape[1], states))
+                    self.matr['Z'] =  np.ones((y.shape[1], states))
                 else:
-                    self.init_matr['Z'] =  np.ones((y_dim, states))
-
+                    self.matr['Z'] =  np.ones((y_dim, states))
             else:
-                self.init_matr['Z'] = Z
+                self.matr['Z'] = np.array(Z)
+            self.matr['Z'] = self.matr['Z'].astype(float)
                 
             if Q is None: 
-                self.init_matr['Q'] = np.eye(eta_size)
+                self.matr['Q'] = np.eye(eta_size)
             else:
-                self.init_matr['Q'] = Q
+                self.matr['Q'] = np.array(Q)
+            self.matr['Q'] = self.matr['Q'].astype(float)
                 
             if H is None: 
                 if y is not None: 
-                    self.init_matr['H'] = np.eye(y.shape[1])
+                    self.matr['H'] = np.eye(y.shape[1])
                 else:
-                    self.init_matr['H'] = np.eye(y_dim)
-                    
+                    self.matr['H'] = np.eye(y_dim)
             else:
-                self.init_matr['H'] = H
+                self.matr['H'] = np.array(H)
+            self.matr['H'] = self.matr['H'].astype(float)
 
             if c is None: 
                 if y is not None: 
-                    self.init_matr['c'] = np.zeros((y.shape[1], 1))
+                    self.matr['c'] = np.zeros((y.shape[1], 1))
                 else:
-                    self.init_matr['c'] = np.zeros((y_dim, 1))
-
+                    self.matr['c'] = np.zeros((y_dim, 1))
             else:
-                self.init_matr['c'] = c
-
+                self.matr['c'] = np.array(c)
+            self.matr['c'] = self.matr['c'].astype(float)
+            
             if d is None: 
-                self.init_matr['d'] = np.zeros((states, 1))
+                self.matr['d'] = np.zeros((self.matr['T'].shape[0],1))
             else:
-                self.init_matr['d'] = d
-
+                self.matr['d'] = np.array(d)
+            self.matr['d'] = self.matr['d'].astype(float)
         
         else: 
             print("error: dimensions don't match")
@@ -242,7 +289,6 @@ class state_spacer():
         time = len(y)
         
         matrices, list_3d = self.get_matrices(syst_matr)
-        
         at, Pt, a, P, F, K, v = self.kalman_init(y, filter_init, time)
         
         t = 0
@@ -250,8 +296,8 @@ class state_spacer():
         
         yt = np.zeros(y[t].shape)   
         
-        newC = np.zeros((self.init_matr['c'].shape[0], self.init_matr['c'].shape[1], time))
-        newD = np.zeros((self.init_matr['d'].shape[0], self.init_matr['c'].shape[1], time ))
+        newC = np.zeros((self.matr['c'].shape[0], self.matr['c'].shape[1], time))
+        newD = np.zeros((self.matr['d'].shape[0], self.matr['c'].shape[1], time ))
 
         v_obj, F_obj, att_obj, Ptt_obj = self.create_empty_objs(yt, H, a[t], P[t])
                 
@@ -280,9 +326,10 @@ class state_spacer():
     
     def kalman_filter(self, y, filter_init):
         o = {}
-        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"]  =  self.kalman_filter_base(y, filter_init, self.init_matr)
+        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"]  =  self.kalman_filter_base(y, filter_init, self.matr)
         return o
         
+    
     def smoothing_iteration(self, v, F, r, T, K, Z, N, P, a):
         L = T - K*Z
         r= v*np.linalg.inv(F).transpose()*Z + (r*L)
@@ -307,7 +354,7 @@ class state_spacer():
         return T, R, Z, Q, H, c, d
     
         
-    def smoother_base(self, y, filter_init):
+    def smoother_base(self, y, filter_init, return_smoothed_errors=True):
         """
         Kalman smoothing recursions, based on the system matrices and the initialisation
         of the filter given. It first gets the processed matrices by calling 
@@ -321,8 +368,8 @@ class state_spacer():
         V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
         """
         
-        matrices, list_3d = self.get_matrices(self.init_matr)
-        at, Pt, a, P, v, F, K, newC, newD =self.kalman_filter_base(y, filter_init, self.init_matr)
+        matrices, list_3d = self.get_matrices(self.matr)
+        at, Pt, a, P, v, F, K, newC, newD =self.kalman_filter_base(y, filter_init, self.matr)
         
 
         r = np.zeros((a.shape))
@@ -365,132 +412,218 @@ class state_spacer():
                 
             _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
 
-
-        return at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N
+        if return_smoothed_errors: 
+            u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond = self.disturbance_smoothing_errors(v, F, K, r, N, matrices, list_3d)
+            return at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N,  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
+        else:
+            return at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N
     
     
-    def smoother(self,y, filter_init):
-        o = {}
-        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"]  =  self.smoother_base(y, filter_init)
-        return o
+    def smoother(self,y, filter_init, return_smoothed_errors=True):
+        if return_smoothed_errors:
+            o = {}
+            e = {}
+            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"], e['u'], e['D'],  e['epsilon_hat'], e['var_epsilon_cond'],  e['eta_hat'],  e['var_eta_cond']  =  self.smoother_base(y, filter_init)
+            return {'output' : o, 'errors' : e}
+        else:
+            o = {}
+            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"]  =  self.smoother_base(y, filter_init)
+            return o
         
-
-        
-    def kalman_llik_diffuse(self,param, y, matr, param_loc, filter_init):
+    
+    def kalman_llik(self, param, y, matr, param_loc, filter_init, llik_fun = llik_gaussian, diffuse = 0):
         """
-        Diffuse loglikelihood function for the Kalman filter system matrices. 
+        (Diffuse) loglikelihood function for the Kalman filter system matrices. 
         The function allows for specification of the elements in the system matrices
         which are optimised, and which are remained fixed. It is not allowed 
         to do maximum likelihood on a time-varying parameter.
         """
-        syst_matr = matr
+        
         
         #get the elements which are optimised in the ML function
         for key in param_loc.keys():
-            syst_matr[param_loc[key]['matrix']][param_loc[key]['row'],param_loc[key]['col']] = param[key]
-
+            matr[param_loc[key][0]][param_loc[key][1],param_loc[key][2]] = param[key]
+        
         #apply Kalman Filter
-        at, Pt, a, P, v, F, K, newC, newD  =  self.kalman_filter_base(y, filter_init, syst_matr)
+        _, _, _, _, v, F, _, _, _  =  self.kalman_filter_base(y, filter_init, matr)
         
         #first element not used in diffuse likeilhood
-        v = v[1:,:,:]
-        F = F[1:,:,:]
-        
-        v_temp = v.copy()
-        v_temp[np.isnan(v_temp)] = 0
-        
-        n = len(v)
-        accum = 0
-        for i in range(n):
-            accum += v_temp[i]*np.linalg.inv(F[i])*v_temp[i].transpose()
-
-        #log likelihood function: -n/2 * log(2*pi) - 1/2*sum(log(F_t) + v_t^2/F_t)
-        l = -(n / 2) * np.log(2 * np.pi) - (1 / 2) * (np.log(np.linalg.det(F)).sum()) - (1 / 2) * (
-                accum)
-        llik = -np.mean(l)
-        return llik
+        v = v[diffuse:,:,:]
+        F = F[diffuse:,:,:]
+        return llik_fun(v, F)
         
     
-    def ml_estimator_matrix(self, y, fun, matr, param_loc, filter_init, param_init,
-                            bnds, method = 'L-BFGS-B',
-                            options = {'eps': 1e-07,'disp': True,'maxiter': 200}):
-        """ MLE estimator which optimises the likelihood function given, based on 
-        initialisation of both the filter and the parameters, bounds, and
-        a method """          
-        
-        #make object with all arguments together              
-        args = (y, matr, param_loc, filter_init)
-
-        #prepare initialisation
-        param_init = np.array( list(param_init.values()))
-        
-        #optimize log_likelihood 
-        results = optimize.minimize(fun, param_init,
-                                          options=options, args = args,
-                                          method=method, bounds=bnds)
-        
-        #print the parameters and the AIC
-        estimates = results.x
-        results['llik'] = -results.fun
-        results['AIC'] = 2*len(param_init) - results['llik']
-        print('params: ' + str(estimates))
-        print('likelihood: ' +str( results['llik'] ))
-        print('AIC: ' +str(results['AIC']))
-
-        return results
+    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, llik_fun = llik_gaussian):
+        return self.kalman_llik( param, y, matr, param_loc, filter_init, llik_gaussian, diffuse = 1)
     
     
-    def fit(self, y, fun, param_loc, filter_init, param_init,
-                  bnds, method = 'L-BFGS-B',
-                  options = {'eps': 1e-07,'disp': True,'maxiter': 200}):
-        
-        syst_matr = self.init_matr
-        
-        res = self.ml_estimator_matrix( y, fun, syst_matr, param_loc,
-                                       filter_init, param_init,
-                            bnds, method = method, options = options)
-        
+    def fit(self, y, fit_method= ml_estimator_matrix, matrix_order = ['T','R','Z','Q','H','c','d'],
+            **fit_kwargs):
+        param_loc = {}
+        i=0
+        for key in  (matrix_order):
+            nan_location = np.argwhere(np.isnan(self.matr[key]))
+            for loc in nan_location:
+                param_loc[i] = key, loc[0], loc[1]
+                print(param_loc[i])
+                i += 1
+            
+        res = fit_method(y, self.matr, param_loc, **fit_kwargs)
         
         param = res.x
 
-        #get the elements which are optimised in the ML function
+        #get the elements which are optimised in the fit function
         for key in param_loc.keys():
-            syst_matr[param_loc[key]['matrix']][param_loc[key]['row'],param_loc[key]['col']] = param[key]
+            self.matr[param_loc[key][0]][param_loc[key][1],param_loc[key][2]] = param[key]
         
-        for key in self.init_matr.keys():
-            self.init_matr[key] = syst_matr[key]
-            
         self.fitted = True
-
+        
+        self.fit_parameters["fit_method"] = fit_method
+        self.fit_parameters["matrix_order"] = matrix_order
+        for kwarg in fit_kwargs.keys():
+            self.fit_parameters[str(kwarg)] = fit_kwargs[kwarg]
+        self.fit_parameters["param_loc"] = param_loc
+        self.fit_results = res
+        
         return self
 
-"""    
-    def disturbance_smoothing_errors(self, ):
-        # initialise dataframe
-        v, F, K, r, N = self.res['v'], self.res['F'],self.res['K'], self.res['r'], self.res['N']
+
+    def disturbance_smoothing_errors_iteration(self, H, Q, R, v, F, K, r, N):
+        v = np.matrix(v)
+        F = np.matrix(F)
+        K = np.matrix(K)
+        r = np.matrix(r)
+        N = np.matrix(N)
         
         # calculate u = v_t/F_t - K_t*r_t
-        u = v * np.linalg.inv(F) - K * r
+        u = v * np.linalg.inv(F) - r* K
     
         # calculate D_t = 1/F_t + K_t^2 * N_t
-        D = 1 * np.linalg.inv(F) + (K ** 2) * N
-    
+        D = np.linalg.inv(F) + np.transpose(K) * N * K
+
         # estimated epsilon_t= sigma2_epsilon * u_t
-        epsilon_hat = H  u
+        epsilon_hat =  u * np.transpose(H)
     
         # estimated conditional variance_t epsilon = sigma2_epsilon - D_t *sigma2_epsilon^2
-        var_epsilon_cond = sigma2_epsilon - temp['D'] * (sigma2_epsilon ** 2)
+        var_epsilon_cond = H - H* D * H
     
         # estimated eta_t= sigma2_eta * r_t
-        eta_hat = temp['r'] * sigma2_eta
+        eta_hat = r * R * np.transpose(Q)
     
         # estimated conditional variance_t eta = sigma2_eta - N_t *sigma2_eta^2
-        var_eta_cond = sigma2_eta - temp['N'] * (sigma2_eta ** 2)
+        var_eta_cond = Q - Q * np.transpose(R) * N * R * Q
     
-        self.diagnostic['u'] = u
-        self.diagnostic['D'] = D
-        self.diagnostic['epsilon_hat'] = epsilon_hat
-        self.diagnostic['var_epsilon_cond'] = var_epsilon_cond
-        self.diagnostic['eta_hat'] = eta_hat
-        self.diagnostic['var_eta_cond'] = var_eta_cond
-"""
+        return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
+
+
+    def disturbance_smoothing_errors(self,  v, F, K, r, N, matrices, list_3d):
+        _, _, _, Q, H, _, _ = self.get_syst_matrices(list_3d, 0, matrices.copy())
+
+                
+        time = len(v)
+        u   = np.zeros((time, (v).shape[1], (np.linalg.inv(F)).shape[1]))
+        D = np.zeros((time, np.linalg.inv(F).shape[1], np.linalg.inv(F).shape[1]))
+        epsilon_hat = np.zeros((time,  v.shape[1], H.shape[1]))
+        var_epsilon_cond = np.zeros((time, H.shape[0], H.shape[1]))
+        eta_hat = np.zeros((time,  r.shape[1], Q.shape[1]))
+        var_eta_cond = np.zeros((time,  (Q).shape[0], (Q).shape[1]))
+        
+        for t in range(len(v)):
+            _, R, _, Q, H, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+            u[t], D[t],  epsilon_hat[t], var_epsilon_cond[t],  eta_hat[t],  var_eta_cond[t] = self.disturbance_smoothing_errors_iteration(H, Q, R, v[t], F[t], K[t], r[t], N[t])
+    
+        return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
+
+
+    # A method for saving object data to JSON file
+    def save_json(self, filepath):
+        self.fit_results['message'] = str(self.fit_results['message'])
+
+        dict_ = {}
+        dict_['fitted'] = self.fitted
+        dict_['matr'] = {}
+        dict_['fit_results'] = {}
+        dict_['fit_parameters'] = {}
+        
+        for matrix in self.matr.keys():
+            dict_['matr'][matrix] = self.matr[matrix].tolist()
+        
+        for key in self.fit_results.keys():
+            if key == "hess_inv":
+                dict_['fit_results'][key] = {}
+                for hess_key in  self.fit_results[key].__dict__.keys():
+                    if type(self.fit_results[key].__dict__[hess_key]) is not np.dtype:
+                        dict_['fit_results'][key][hess_key] = self.fit_results[key].__dict__[hess_key]
+                    print(self.fit_results[key].__dict__[hess_key])
+            else: 
+                
+                dict_['fit_results'][key] = self.fit_results[key]
+                
+        for key in self.fit_parameters.keys():
+            if callable(self.fit_parameters[key]):
+                dict_['fit_parameters'][key] = self.fit_parameters[key].__name__
+            else:
+                dict_['fit_parameters'][key] = self.fit_parameters[key]
+                
+        
+        # Creat json and save to file
+        json_txt = json.dumps(dict_, cls=NpEncoder, indent=4)
+        
+        with open(filepath, 'w') as file:
+            file.write(json_txt)
+            
+    
+    # A method for loading data from JSON file
+    def load_json(self, filepath):
+        with open(filepath, 'r') as file:
+            dict_ = json.load(file)
+            
+        self.fitted = dict_['fitted'] 
+        for matrix in dict_['matr'].keys():
+            self.matr[matrix] = np.asarray(dict_["matr"][matrix]) if dict_["matr"][matrix] != 'None' else None
+
+        for key in dict_['fit_results'].keys():
+            self.fit_results[key] = dict_['fit_results'][key]  if dict_['fit_results'][key]  != 'None' else None
+
+        for key in dict_['fit_parameters'].keys():
+            self.fit_parameters[key] = dict_['fit_parameters'][key] if dict_['fit_parameters'][key] != 'None' else None
+
+
+    def save_matrices_json(self, filepath):
+
+        dict_ = {}
+        
+        for matrix in self.matr.keys():
+            dict_['matr'][matrix] = self.matr[matrix].tolist()
+            
+        
+        # Creat json and save to file
+        json_txt = json.dumps(dict_, cls=NpEncoder, indent=4)
+        
+        with open(filepath, 'w') as file:
+            file.write(json_txt)
+            
+    
+    # A method for loading data from JSON file
+    def load_matrices(self, filepath):
+        with open(filepath, 'r') as file:
+            dict_ = json.load(file)
+            
+        self.fitted = dict_['fitted'] 
+        for matrix in dict_['matr'].keys():
+            self.matr[matrix] = np.asarray(dict_["matr"][matrix]) if dict_["matr"][matrix] != 'None' else None
+
+
+
+
+class NpEncoder(json.JSONEncoder):
+    def default(self, obj):
+        if isinstance(obj, np.integer):
+            return int(obj)
+        if isinstance(obj, np.floating):
+            return float(obj)
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        return super(NpEncoder, self).default(obj)
+
+# Your codes .... 
