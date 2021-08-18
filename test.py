@@ -24,7 +24,7 @@ if __name__ == "__main__":
     Nile_filter = state_spacer()
     
     #choose model specification
-    simple_model = False
+    simple_model = True
     
     if simple_model:
         #set the function and initialisation of the matrices
@@ -53,7 +53,13 @@ if __name__ == "__main__":
         #get output
         o = Nile_filter.smoother(y, filter_init)
         output, errors = o['output'], o['errors']
+        
+        b1 = Nile_filter.simulation_smoother(y, filter_init,10)
+        for i in range(10):
+            plt.plot(b1[:,:,i],c='grey')
 
+        plt.plot(output['alpha'][:,:,0])
+        plt.show()
     else:
         #set the function
         kalman_llik = Nile_filter.kalman_llik_diffuse

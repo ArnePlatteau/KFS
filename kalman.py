@@ -7,6 +7,7 @@ Created on Fri Jun  4 11:07:16 2021
 from scipy import optimize
 import numpy as np
 import json
+import matplotlib.pyplot as plt
  
 def llik_gaussian(v, F):
     v_temp = v.copy()
@@ -392,7 +393,6 @@ class state_spacer():
                     L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
                 else: 
                     L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
-               
             t = - 1
             T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
     
@@ -400,7 +400,7 @@ class state_spacer():
                 _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
             else: 
                 _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
-   
+                print(alpha[t+1])
         else: 
             for t in range(len(a)-3, -1,-1):
                 T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
@@ -465,7 +465,6 @@ class state_spacer():
             nan_location = np.argwhere(np.isnan(self.matr[key]))
             for loc in nan_location:
                 param_loc[i] = key, loc[0], loc[1]
-                print(param_loc[i])
                 i += 1
             
         res = fit_method(y, self.matr, param_loc, **fit_kwargs)
@@ -535,6 +534,55 @@ class state_spacer():
         return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
 
 
+    def simulation_smoother_one(self, y, filter_init, eta, epsilon):
+        matrices, list_3d = self.get_matrices(self.matr)
+
+        a1, P1 = filter_init
+        states = self.matr['T'].shape[1]
+        alphaplus = np.zeros((len(y), states))
+        yplus = np.zeros(y.shape)
+        
+        t=0
+        T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+        alphaplus[t] = d + np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))
+
+        yplus[t] = c + Z*alphaplus[t] + np.linalg.cholesky(H)*epsilon[t]
+        for t in range(len(alphaplus)-1):
+            T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+            
+            alphaplus[t+1] = d +  T*alphaplus[t] + R*np.linalg.cholesky(Q)*eta[t]
+            yplus[t+1] = c + Z*alphaplus[t+1] + np.linalg.cholesky(H)*epsilon[t+1]
+            
+        y_tilde = y - yplus
+
+       # at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+        o = {}
+        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"] =  self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+        alpha = o["alpha"]
+        plt.plot(alpha.reshape(-1,1))
+        plt.show()
+        alpha_tilde = alphaplus + alpha.reshape(-1,1)
+
+        return alpha_tilde
+
+    
+    def simulation_smoother(self, y, filter_init, n):
+        states = self.matr['T'].shape[1]
+
+        eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
+        eps_shape = list(y.shape)
+        eps_shape.append(n)
+        eps_shape = tuple(eps_shape)
+        epsilon = np.random.normal(0,1, size=eps_shape)
+        alpha_tilde_array = np.zeros((len(y), states,n))
+        for i in range(n):
+            print(i)
+            alpha_tilde_array[:,:,i] = self.simulation_smoother_one( y, filter_init, eta[:,:,i], epsilon[:,:,i])
+        
+        return alpha_tilde_array
+    
+    
+    
     # A method for saving object data to JSON file
     def save_json(self, filepath):
         self.fit_results['message'] = str(self.fit_results['message'])
