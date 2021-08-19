@@ -10,27 +10,82 @@ import json
 import matplotlib.pyplot as plt
  
 def llik_gaussian(v, F):
+    """
+    Log likelihood function of a Gaussian model, based on the prediction error 
+    decomposition.
+
+    Parameters
+    ----------
+    v : array-like
+        Prediction errors. 1D or 2D.
+    F : array-like
+        Prediction error variance. 2D or 3D array. 
+
+    Returns
+    -------
+    llik : integer
+        Negative loglikeilhood.
+
+    """
+    #set all elements which are nan to zero
     v_temp = v.copy()
     v_temp[np.isnan(v_temp)] = 0
     
-    n = len(v)
+    #get length of the error terms
+    T = len(v)
+    
+    #compute the sum of vt*Ft^-1*vt' for all t in T
     accum = 0
-    for i in range(n):
-        accum += v_temp[i]*np.linalg.inv(F[i])*v_temp[i].transpose()
+    for t in range(T):
+        accum += v_temp[t]*np.linalg.inv(F[t])*v_temp[t].transpose()
 
     #log likelihood function: -n/2 * log(2*pi) - 1/2*sum(log(F_t) + v_t^2/F_t)
-    l = -(n / 2) * np.log(2 * np.pi) - (1 / 2) * (np.log(np.linalg.det(F)).sum()) - (1 / 2) * (
+    l = -(T / 2) * np.log(2 * np.pi) - (1 / 2) * (np.log(np.linalg.det(F)).sum()) - (1 / 2) * (
             accum)
-    llik = -np.mean(l)
+    
+    #use of mean (sum would also be possible, but in the optimisation this would amount to the same)
+    llik = -np.mean(l) #negative as minimizer function is used
     return llik
 
 
 def ml_estimator_matrix( y, matr, param_loc, kalman_llik, filter_init, param_init,
                             bnds,  method = 'L-BFGS-B',
                             options = {'eps': 1e-07,'disp': True,'maxiter': 200}, **llik_kwargs):
-        """ MLE estimator which optimises the likelihood function given, based on 
+        """
+        MLE estimator which optimises the likelihood function given, based on 
         initialisation of both the filter and the parameters, bounds, and
-        a method """          
+        a method.
+        
+        Parameters
+        ----------
+        y : array-like 
+            Observations used for the fitting of a model.
+            matr : dict. System matrices of the state space model.
+        param_loc : dict
+            Locations of the parameters to be optimised in their 
+            respective matrices.
+        kalman_llik : function. 
+            Log likelihood function to be optimised.
+        filter_init : tuple
+            Initialisation of the Kalman filter.
+        param_init : tuple
+            Initialisation of the parameters.
+        bnds : tuple
+            Bounds for the parameters in the optimisation.
+        method : string, optional
+            method used for the optimisation of the likelihood function. 
+            The default is 'L-BFGS-B'.
+        options : dict, optional
+            Options for the optimize.minimize function. 
+            The default is {'eps': 1e-07,'disp': True,'maxiter': 200}.
+        **llik_kwargs : further arguments for the log likelihood function.
+    
+        Returns
+        -------
+        results : dict
+            Output of optimize.minimize function
+
+        """
         
         #make object with all arguments together              
         args = (y, matr, param_loc, filter_init, llik_kwargs)
@@ -50,9 +105,33 @@ def ml_estimator_matrix( y, matr, param_loc, kalman_llik, filter_init, param_ini
 
         return results
 
-
+### implement fully!!!!
 def dim_check(T, R, Z, Q, H, c, d):
-    """Returns true if the dimensions are okay """
+    """
+    Returns true if the dimensions are okay 
+    Parameters
+    ----------
+    T : array-like
+        System matrix T.
+    R : array-like
+        System matrix R.
+    Z : array-like
+        System matrix Z.
+    Q : array-like
+        System matrix Q.
+    H : array-like
+        System matrix H.
+    c : array-like
+        System matrix c.
+    d : array-like
+        System matrix d.
+
+    Returns
+    -------
+    bool
+        returns True if dimensions are appropriate and False otherwise.
+
+    """
     
     return True
 
@@ -61,17 +140,40 @@ def collect_3d(dict_syst_matr):
     Takes a dict of system matrices in, and returns a list of the matrix names
     which are in 3D. Used in the Kalman recursions to be able for the functions 
     to work on time-varying system matrices as well as constant system matrices.
-    """
 
+    Parameters
+    ----------
+    dict_syst_matr : dict
+        dict with all system matrices.
+
+    Returns
+    -------
+    list_3d : list
+        list of system matrices in 3D.
+
+    """
+    
     list_3d = list()
     for key in dict_syst_matr.keys():
         if len(dict_syst_matr[key].shape) >2:
             list_3d.append(key)
     return list_3d
 
+
 def convert_matrix(*args):
     """
     Convert arrays to matrices
+
+    Parameters
+    ----------
+    *args : list
+            arrays to be converted to matrices.
+
+    Returns
+    -------
+    args : np.matrix
+           Arrays converted in matrices.
+
     """
 
     for el in args:
@@ -89,7 +191,18 @@ class state_spacer():
             alphat+1 = d + alphat + Rt etat, etat ~NID(0,Q) 
         
         define time-varying structural matrices in dimension (row, column, time)
+
+        Parameters
+        ----------
+        *matrices : dict
+                    System matrices of the state space model.
+
+        Returns
+        -------
+        None.
+
         """
+        
         self.init_matrices(*matrices)
         self.fit_parameters = {}
         self.fit_results = {}
@@ -98,14 +211,73 @@ class state_spacer():
 
     def init_matrices(self, T=None, R=None, Z=None, Q=None, H=None, 
                             c=None, d=None, y= None, y_dim =1, states = 1, eta_size = 1):
-        """ 
+        """
         Sets the initial system matrices. When no matrices are specified, default
         initial system matrices are set. It is also possible to detremine the 
         size of the error terms, the default matrices will then be set according
         to the dimensions specified.
+
+        Parameters
+        ----------
+        T : array-like, optional
+            T system matrix. Can be 1D, 2D or 3D. If not filled in, T is an 
+            np.eye matrix with the dimensions equalling the number of states.
+            The default is None.
+        R : array-like, optional
+            R system matrix. Can be 1D, 2D or 3D.  If not filled in, R is a 
+            matrix with ones with the dimensions the states and the number of 
+            eta error terms.
+            The default is None.
+        Z : array-like, optional
+            Z system matrix. Can be 1D, 2D or 3D. If not  filled in, Z is a 
+            matrix with ones with the dimensions the number of time series in y
+            and the number of states. 
+            The default is None.
+        Q : array-like, optional
+            Q system matrix. Can be 1D, 2D or 3D. If not filled in, Q is an 
+            eye matrix with the dimensions the number of eta error terms.
+            The default is None.
+        H : array-like, optional
+            H system matrix. Can be 1D, 2D or 3D. If not filled in, H is an 
+            eye matrix with the dimensions the number of epsilon error terms.
+            The default is None.
+        c : array-like, optional
+            c system matrix. Can be 1D, 2D or 3D. If not filled in, c is an 
+            vector with the dimensions the number of time series in y.
+            The default is None.
+        d : array-like, optional
+            d system matrix. Can be 1D, 2D or 3D. If not filled in, d is a 
+            vector with the dimensions the number of states.
+            The default is None.
+        y : array-like, optional
+            Data. When added, this allows the function to correctly specify
+            the system matrices dimensions. Specifying explicit matrices
+            may (partially) override the information provided here. 
+            The default is None.
+        y_dim : integer, optional
+            Number of time series in y. Instead of adding the data, this number
+            can be added, which allows the function to correctly specify the 
+            system matrix dimensions. Specifying explicit matrices
+            may (partially) override the information provided here.
+            The default is 1.
+        states : integer, optional
+            Number of states desired in the state space model. Specifying
+            explicit matrices may (partially) override the information provided 
+            here.The default is 1.
+        eta_size : integer optional
+            number of eta terms to be added in the state space model. Specifying 
+            explicit matrices may (partially) override the information provided 
+            here.
+            The default is 1.
+
+        Returns
+        -------
+        None.
+
         """
+        
+        #check to see if the matrices given have valid dimensions 
         if dim_check(T, R, Z, Q, H, c, d):
-            #check to see if the matrices given have valid dimensions 
             
             self.matr = {}
             if T is None: 
@@ -167,8 +339,22 @@ class state_spacer():
         """
         Helper function. It looks which matrices 
         are 3D, collects these in a list, and for all 2D matrices ensures that 
-        they are in a np.matrix element.
+        they are in a np.matrix element.    
+
+        Parameters
+        ----------
+        syst_matr : TYPE
+            DESCRIPTION.
+
+        Returns
+        -------
+        matr : TYPE
+            DESCRIPTION.
+        list_3d : TYPE
+            DESCRIPTION.
+
         """
+        
         matr = {}
         list_3d = collect_3d(syst_matr)
 
@@ -534,7 +720,7 @@ class state_spacer():
         return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
 
 
-    def simulation_smoother_one(self, y, filter_init, eta, epsilon):
+    def simulation_smoother_one(self, y, filter_init, eta, epsilon, dist_fun_alpha1):
         matrices, list_3d = self.get_matrices(self.matr)
 
         a1, P1 = filter_init
@@ -544,14 +730,15 @@ class state_spacer():
         
         t=0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-        alphaplus[t] = d + np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))
+      #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
+        alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
 
-        yplus[t] = c + Z*alphaplus[t] + np.linalg.cholesky(H)*epsilon[t]
+     #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
+        yplus[t] = c + alphaplus[t]*np.transpose(Z)  + np.linalg.cholesky(H)*epsilon[t]
         for t in range(len(alphaplus)-1):
             T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-            
-            alphaplus[t+1] = d +  T*alphaplus[t] + R*np.linalg.cholesky(Q)*eta[t]
-            yplus[t+1] = c + Z*alphaplus[t+1] + np.linalg.cholesky(H)*epsilon[t+1]
+            alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
+            yplus[t+1] = c + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
             
         y_tilde = y - yplus
 
@@ -561,23 +748,30 @@ class state_spacer():
         alpha = o["alpha"]
         plt.plot(alpha.reshape(-1,1))
         plt.show()
-        alpha_tilde = alphaplus + alpha.reshape(-1,1)
+        alpha_tilde = alphaplus + alpha.reshape(-1,states)
 
         return alpha_tilde
 
     
-    def simulation_smoother(self, y, filter_init, n):
+    def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None):
         states = self.matr['T'].shape[1]
 
         eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
+        if dist_fun_alpha1 is None:
+            if self.matr['R'].shape[1] > 1:
+                dist_fun_alpha1 = np.random.multivariate_normal
+            else:
+                dist_fun_alpha1 = np.random.normal
+        
+
         eps_shape = list(y.shape)
         eps_shape.append(n)
         eps_shape = tuple(eps_shape)
         epsilon = np.random.normal(0,1, size=eps_shape)
         alpha_tilde_array = np.zeros((len(y), states,n))
+        print(alpha_tilde_array.shape)
         for i in range(n):
-            print(i)
-            alpha_tilde_array[:,:,i] = self.simulation_smoother_one( y, filter_init, eta[:,:,i], epsilon[:,:,i])
+            alpha_tilde_array[:,:,i] = self.simulation_smoother_one(y, filter_init, eta[:,:,i], epsilon[:,:,i], dist_fun_alpha1)
         
         return alpha_tilde_array
     
@@ -674,4 +868,3 @@ class NpEncoder(json.JSONEncoder):
             return obj.tolist()
         return super(NpEncoder, self).default(obj)
 
-# Your codes .... 

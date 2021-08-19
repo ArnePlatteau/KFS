@@ -24,7 +24,7 @@ if __name__ == "__main__":
     Nile_filter = state_spacer()
     
     #choose model specification
-    simple_model = True
+    simple_model = False
     
     if simple_model:
         #set the function and initialisation of the matrices
@@ -87,6 +87,16 @@ if __name__ == "__main__":
         #get output
         o = Nile_filter.smoother(y, filter_init)
         output, errors = o['output'], o['errors']
+        
+        b1 = Nile_filter.simulation_smoother(y, filter_init,10)
+        for i in range(10):
+            plt.plot(b1[:,:,i],c='grey')
+
+        plt.plot(output['alpha'][:,:,0])
+        plt.plot(output['alpha'][:,:,1])
+
+        plt.show()
+
 
     #plot data and filtered and smoothed values    
     plt.figure(figsize=(10, 6), dpi=200)
