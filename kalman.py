@@ -681,7 +681,7 @@ class state_spacer():
         N = np.matrix(N)
         
         # calculate u = v_t/F_t - K_t*r_t
-        u = v * np.linalg.inv(F) - r* K
+        u = v * np.linalg.inv(F) - r * K
     
         # calculate D_t = 1/F_t + K_t^2 * N_t
         D = np.linalg.inv(F) + np.transpose(K) * N * K
@@ -737,8 +737,10 @@ class state_spacer():
         yplus[t] = c + alphaplus[t]*np.transpose(Z)  + np.linalg.cholesky(H)*epsilon[t]
         for t in range(len(alphaplus)-1):
             T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-            alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
-            yplus[t+1] = c + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
+            alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*np.linalg.cholesky(Q)*eta[t].reshape(-1,1))
+
+           # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
+            yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
             
         y_tilde = y - yplus
 
@@ -753,7 +755,7 @@ class state_spacer():
         return alpha_tilde
 
     
-    def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None):
+    def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, **kwargs):
         states = self.matr['T'].shape[1]
 
         eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
@@ -771,7 +773,7 @@ class state_spacer():
         alpha_tilde_array = np.zeros((len(y), states,n))
         print(alpha_tilde_array.shape)
         for i in range(n):
-            alpha_tilde_array[:,:,i] = self.simulation_smoother_one(y, filter_init, eta[:,:,i], epsilon[:,:,i], dist_fun_alpha1)
+            alpha_tilde_array[:,:,i] = self.simulation_smoother_one(y, filter_init, eta[:,:,i], epsilon[:,:,i], dist_fun_alpha1, **kwargs)
         
         return alpha_tilde_array
     

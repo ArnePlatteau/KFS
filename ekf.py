@@ -106,3 +106,42 @@ class eStateSpacer(StateSpacer):
 
         return v, F, K, att, Ptt, at1, Pt1, c, d
 
+    
+        def simulation_smoother_one(self, y, filter_init, eta, epsilon, 
+                                    dist_fun_alpha1, alpha_fun, y_fun):
+            
+            matrices, list_3d = self.get_matrices(self.matr)
+    
+            a1, P1 = filter_init
+            states = self.matr['T'].shape[1]
+            alphaplus = np.zeros((len(y), states))
+            yplus = np.zeros(y.shape)
+            
+            t=0
+            T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+          #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
+            alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
+    
+         #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
+            yplus[t] = c + alphaplus[t]*np.transpose(Z)  + np.linalg.cholesky(H)*epsilon[t]
+            for t in range(len(alphaplus)-1):
+                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+                alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*np.linalg.cholesky(Q)*eta[t].reshape(-1,1))
+    
+               # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
+                yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
+                
+            y_tilde = y - yplus
+    
+           # at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+            o = {}
+            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"] =  self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+            alpha = o["alpha"]
+            alpha_tilde = alphaplus + alpha.reshape(-1,states)
+    
+            return alpha_tilde
+    
+
+        def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, **kwargs):
+            print('Not implemented yet.')
+            

@@ -9,9 +9,11 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from kalman import state_spacer
+import time
 
 #testing the functions
 if __name__ == "__main__":
+    start_time = time.time()
     #read in the data
     y = pd.read_csv('nile.dat')
     y = np.array(y).astype('float')
@@ -19,6 +21,9 @@ if __name__ == "__main__":
     period = np.zeros((25,1))   
     period[:] = np.nan
     y = np.append(y, period, axis = 0)
+    
+    #number of simulations in simulation smoother
+    nsim = 200
     
     #create state_space object
     Nile_filter = state_spacer()
@@ -50,16 +55,7 @@ if __name__ == "__main__":
         Nile_filter.fit(y, kalman_llik=kalman_llik,
                         filter_init=filter_init, param_init=param_init, bnds=bnds)
 
-        #get output
-        o = Nile_filter.smoother(y, filter_init)
-        output, errors = o['output'], o['errors']
         
-        b1 = Nile_filter.simulation_smoother(y, filter_init,10)
-        for i in range(10):
-            plt.plot(b1[:,:,i],c='grey')
-
-        plt.plot(output['alpha'][:,:,0])
-        plt.show()
     else:
         #set the function
         kalman_llik = Nile_filter.kalman_llik_diffuse
@@ -78,24 +74,29 @@ if __name__ == "__main__":
         Nile_filter.matr['H'][0,0] = np.nan
         Nile_filter.matr['Q'][0,0] = np.nan
         
-        #estimate MLE parameters
         bnds = ((-.999,.999), (4000, 5000), (12, 16),(180, 200))
 
-        Nile_filter.fit(y, kalman_llik=kalman_llik,
-                        filter_init=filter_init, param_init=param_init, bnds=bnds)
-    
-        #get output
-        o = Nile_filter.smoother(y, filter_init)
-        output, errors = o['output'], o['errors']
+    #estimate MLE parameters
+    Nile_filter.fit(y, kalman_llik=kalman_llik,
+                    filter_init=filter_init, param_init=param_init, bnds=bnds)
+
+    #get output
+    o = Nile_filter.smoother(y, filter_init)
+    output, errors = o['output'], o['errors']
         
-        b1 = Nile_filter.simulation_smoother(y, filter_init,10)
-        for i in range(10):
-            plt.plot(b1[:,:,i],c='grey')
 
-        plt.plot(output['alpha'][:,:,0])
-        plt.plot(output['alpha'][:,:,1])
 
-        plt.show()
+    #test the simulation smoother
+    simulations = Nile_filter.simulation_smoother(y, filter_init, nsim)
+    
+    #plot simulated paths and actual alpha
+    for i in range(nsim):
+        plt.plot(simulations[:,:,i],c='grey')
+    for i in range(output['alpha'].shape[2]):
+        plt.plot(output['alpha'][:,:,i])
+    plt.show()
+
+
 
 
     #plot data and filtered and smoothed values    
@@ -123,4 +124,7 @@ if __name__ == "__main__":
     Nile_filter.save_json("Nile_filter.json")
     dummy = state_spacer()
     dummy.load_json("Nile_filter.json")
+    
+    stop_time = time.time()
+    print('script time: ' + str(stop_time - start_time))
     
