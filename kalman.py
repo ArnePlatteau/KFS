@@ -548,7 +548,6 @@ class state_spacer():
             Just c, no transformation happens in normal Kalman filter.
         d : array-like
             Just d, no transformation happens in normal Kalman filter.
-
         """
         
         #v and a are transposed

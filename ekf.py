@@ -10,11 +10,52 @@ import numpy as np
 
 class eStateSpacer(StateSpacer):
     """Class which implements the extended Kalman Filter. This technique 
-    uses a Taylor transformation
+    uses a Taylor transformation of the first order for linearising non-linear
+    functions and then uses the Kalman filter on the linearised function.
     """
     def __init__(self, ZFun, ZDotFun, TFun, TDotFun, ZArgs = {}, ZDotArgs = {},
                  TArgs = {}, TDotArgs = {}, *matrices
                  ):
+        """
+        Implementation of the following model:
+            yt = c + Z(alphat) + epst , epst ~ NID(0,H)
+            alphat+1 = d + T(alphat) + Rt*etat , etat ~NID(0,Q) 
+        
+        With Z(), and T() differentiable (non-)linear functions
+        
+        define time-varying structural matrices in dimension (row, column, time)
+
+
+        Parameters
+        ----------
+        ZFun : function
+            Definition of the Z function.
+        ZDotFun : function
+            Definition of the derivative of the Z function.
+        TFun : function
+            Definition of the T function.
+        TDotFun : function
+            Definition of the derivative of the T function.
+        ZArgs : dict, optional
+            Additional arguments for the Z function. 
+            The default is {}.
+        ZDotArgs : dict, optional
+            Additional arguments for the derivative of the Z function. 
+            The default is {}.
+        TArgs : dict, optional
+            Additional arguments for the T function. 
+            The default is {}.
+        TDotArgs : dict, optional
+            Additional arguments for the derivative of the T function. 
+            The default is {}.
+        *matrices : dict
+                    System matrices of the state space model.
+
+        Returns
+        -------
+        None.
+
+        """
         self.ZFun = ZFun
         self.ZDotFun = ZDotFun
         self.TFun = TFun
@@ -26,31 +67,146 @@ class eStateSpacer(StateSpacer):
         self.TDotArgs = TDotArgs
         super().__init__(*matrices)
 
+
     def get_Z(self, x, *args):
+        """
+        Evaluate the Z function at x.
+
+        Parameters
+        ----------
+        x : input of the Z function.
+        *args : additional arguments for the Z function.
+
+        Returns
+        -------
+        int
+            evaluation of the Z function.
+
+        """
         return np.matrix(self.ZFun(x, *args, **self.ZArgs))
 
 
     def get_Z_dot(self, x, *args):
+        """
+        Evaluate the derivative of the Z function at x.
+
+        Parameters
+        ----------
+        x : input of the derivative of the Z function.
+        *args : additional arguments for the derivative of the Z function.
+
+        Returns
+        -------
+        int
+            evaluation of the derivative of the Z function.
+
+        """
         return np.matrix(self.ZDotFun(x, *args, **self.ZDotArgs))
 
 
     def get_T(self, x, *args):
+        """
+        Evaluate the T function at x.
+
+        Parameters
+        ----------
+        x : input of the T function.
+        *args : additional arguments for the T function.
+
+        Returns
+        -------
+        int
+            evaluation of the T function.
+
+
+        """
         return np.matrix(self.TFun(x, *args, **self.TArgs))
 
 
     def get_T_dot(self, x, *args):
+        """
+        Evaluate the derivative of the T function at x.
+
+        Parameters
+        ----------
+        x : input of the derivative of the T function.
+        *args : additional arguments for the derivative of the T function.
+
+        Returns
+        -------
+        int
+            evaluation of the derivative of the T function.
+
+        """
+
         return np.matrix(self.TDotFun(x, *args, **self.TDotArgs))
     
 
     def kalman_filter_iteration(self, yt, a, P, Z, T, c, d, H, Q, R,
                                 v, F, att, Ptt):
         """
-        v_t = y_t - Z_t*a_t - c_t
-        F_t = Z_t*P_t* Z_t' +  H_t
-        K_t = T_t*P_t*Z_t'*F_t-1
-        a_{t+1} = T_t* a_t + K_t*v_t + d
-        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+        Single iteration of the Kalman filter.         
+        v_t = y_t - Z(a) - c_t 
+        F_t = Zdot_t*P_t* Zdot_t' +  H_t
+        K_t = T_t*P_t*Zdot_t'*F_t-1
+        a_{t+1} = T(at) + K_t*v_t + d
+        P_{t+1} = Tdot_t*P_t*Tdot_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+
+
+        Parameters
+        ----------
+        yt : int or array-like
+            Observation data at time t.
+        a : int or array-like
+            State prediction for time t.
+        P : int or array-like
+            Variance of state prediction for time t.
+        Z : array-like
+            System matrix Zt.
+        T : array-like
+            System matrix Tt.
+        c : array-like
+            System matrix ct.
+        d : array-like
+            System matrix dt.
+        H : array-like
+            System matrix Ht.
+        Q : array-like
+            System matrix Qt.
+        R : array-like
+            System matrix Rt.
+        v : int or array-like
+            Previous prediction error.
+        F : int or array-like
+            Previous prediction error variance.
+        att : int or array-like
+            Previous filtered state (t-1).
+        Ptt : int or array-like
+            Previous filtered state variance (t-1).
+
+        Returns
+        -------
+        v : int or array-like
+            New prediction error.
+        F : int or array-like
+            New prediction error variance.
+        K : int or array-like
+            New K.
+        att : int or array-like
+            New filtered state (time t).
+        Ptt : int or array-like
+            New filtered state variance (time t).
+        at1 : int or array-like
+            New state prediction for t + 1.
+        Pt1 : int or array-like
+            Variance of state prediction for t + 1.
+        c : array-like
+            Just c, no transformation happens in normal Kalman filter.
+        d : array-like
+            Just d, no transformation happens in normal Kalman filter.
+
         """
+
 
         Z_new = np.matrix(self.get_Z_dot(a, Z))
 
@@ -78,11 +234,68 @@ class eStateSpacer(StateSpacer):
     def kalman_filter_iteration_missing(self, yt, a, P, Z, T, c, d, H, Q, R,
                                 v, F, att, Ptt, tol = 1e7 ):
         """
-        v_t = y_t - Z_t*a_t - c_t
-        F_t = Z_t*P_t* Z_t' +  H_t
-        K_t = T_t*P_t*Z_t'*F_t-1
-        a_{t+1} = T_t* a_t + K_t*v_t + d
-        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+        Kalman iteration function in case the observation is missing.
+        
+        v_t = undefined
+        F_t = infinity
+        K_t = 0
+        a_{t+1} = T(a_t) + d
+        P_{t+1} = Tdot*P_t*Tdot_t' + R_t*Q_t*R_t'
+
+        Parameters
+        ----------
+        yt : int or array-like
+            Observation data at time t.
+        a : int or array-like
+            State prediction for time t.
+        P : int or array-like
+            Variance of state prediction for time t.
+        Z : array-like
+            System matrix Zt.
+        T : array-like
+            System matrix Tt.
+        c : array-like
+            System matrix ct.
+        d : array-like
+            System matrix dt.
+        H : array-like
+            System matrix Ht.
+        Q : array-like
+            System matrix Qt.
+        R : array-like
+            System matrix Rt.
+        v : int or array-like
+            Previous prediction error. (not used in the code, placeholder)
+        F : int or array-like
+            Previous prediction error variance. (not used in the code, placeholder)
+        att : int or array-like
+            Previous filtered state (t-1).
+        Ptt : int or array-like
+            Previous filtered state variance (t-1).
+        tol : int or float, optional
+            High value which in theory should go to infinity. The default is 1e7.
+
+        Returns
+        -------
+        v : int or array-like
+            New prediction error.
+        F : int or array-like
+            New prediction error variance.
+        K : int or array-like
+            New K.
+        att : int or array-like
+            New filtered state (time t).
+        Ptt : int or array-like
+            New filtered state variance (time t).
+        at1 : int or array-like
+            New state prediction for t + 1.
+        Pt1 : int or array-like
+            Variance of state prediction for t + 1.
+        c : array-like
+            Just c, no transformation happens in normal Kalman filter.
+        d : array-like
+            Just d, no transformation happens in normal Kalman filter.
+
         """
         
         c = np.matrix(c + self.get_Z(a, Z) - a*self.get_Z_dot(a, Z).transpose())
@@ -91,7 +304,7 @@ class eStateSpacer(StateSpacer):
         v = yt
         #F, P and K are not transposed
         F = np.matrix(np.ones(H.shape)*tol)
-        M = np.matrix(np.zeros((P*Z.transpose()*np.linalg.inv(F)).shape))
+        M = np.matrix(np.zeros((P*Z.transpose()*np.linalg.inv(F)).shape)) #set zeros
         K = T*M
         
         att = a 
@@ -109,7 +322,7 @@ class eStateSpacer(StateSpacer):
     
         def simulation_smoother_one(self, y, filter_init, eta, epsilon, 
                                     dist_fun_alpha1, alpha_fun, y_fun):
-            
+            """work in progress"""
             matrices, list_3d = self.get_matrices(self.matr)
     
             a1, P1 = filter_init
@@ -143,5 +356,6 @@ class eStateSpacer(StateSpacer):
     
 
         def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, **kwargs):
+            """Work in progress """
             print('Not implemented yet.')
             
