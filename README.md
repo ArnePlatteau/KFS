@@ -15,12 +15,13 @@ the dimensions are consistent. The user can also decide which elements of the st
 estimated. The only restriction is that estimated parameters are fixed in time, as to prevent the state space model from overfitting.
 
 # Files 
-* kalman.py : definition of the state-spacer class, which contains specification, Kalman filtering, Kalman smoothing, and estimation methods.
-* test.py : illustration of using the methods by applying the methods on a dataset.
+* kalman.py : definition of the state-spacer class, which contains specification, Kalman filtering, Kalman smoothing, estimation methods, disturbance error smoothing, and simulation smoothing.
+* * ekf.py : definition of extended Kalman filter, which has the aforementioned functionalities but for an extended Kallman filter.
+* test.py : illustration of using the Kalman filter methods by applying the methods on a dataset.
+* test_ekf_square.py : illustration of using the extended Kalman filter methods by applying the methods on a dataset.
 * nile.dat : dataset containing the data used for the test file
 
 # Future developments
-* Extended Kalman filter (to deal with non-linear state space models)
 * Collapsed Kalman filter (to deal with high-dimensional models)
 * Particle filter (to deal with non-Gaussian, non-linear models)
 
