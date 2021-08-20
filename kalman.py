@@ -4,6 +4,8 @@ Created on Fri Jun  4 11:07:16 2021
 
 @author: arnep
 """
+
+
 from scipy import optimize
 import numpy as np
 import json
@@ -343,47 +345,132 @@ class state_spacer():
 
         Parameters
         ----------
-        syst_matr : TYPE
-            DESCRIPTION.
+        syst_matr : dict
+            Dict containing the system matrices.
 
         Returns
         -------
-        matr : TYPE
-            DESCRIPTION.
-        list_3d : TYPE
-            DESCRIPTION.
+        syst_matr : dict
+            Dict where all 2D matrices are in a np.matrix() object.
+        list_3d : list
+            list of 3D matrices.
 
         """
         
-        matr = {}
+        #get list of the matrices in 3D
         list_3d = collect_3d(syst_matr)
-
-        for el in ['T', 'R', 'Z', 'Q', 'H', 'c', 'd']:
-            matr[el] = syst_matr[el]
-        
-        for el in filter(lambda el: el not in list_3d, matr.keys()):
-            matr[el] = np.matrix(matr[el])
+ 
+        #ensure the 2D matrices are in a np.matrix() object
+        for el in filter(lambda el: el not in list_3d, syst_matr.keys()):
+            syst_matr[el] = np.matrix(syst_matr[el])
             
-        return matr, list_3d
+        return syst_matr, list_3d
+
+
+    def get_syst_matrices(self, list_3d, t, matrices):
+        """
+        Function which unpacks the dict with all the system matrices for time 
+        t so that this can be conveniently used in the recursions.
+        
+        Parameters
+        ----------
+        list_3d : list
+            List of matrices which are in 3D.
+        t : integer
+            time t.
+        matrices : dict
+            Dict of matrices.
+
+        Returns
+        -------
+        T : np.matrix()
+            System matrix Tt.
+        R : np.matrix()
+            System matrix Rt.
+        Z : np.matrix()
+            System matrix Zt.
+        Q : np.matrix()
+            System matrix Qt.
+        H : np.matrix()
+            System matrix Ht.
+        c : np.matrix()
+            System matrix ct.
+        d : np.matrix()
+            System matrix dt.
+
+        """
+        
+        #get the dict with the sytem matrices of time t
+        matr = self.transit_syst_matrix(list_3d, t, matrices.copy())
+
+        #return this unpacked
+        return matr['T'], matr['R'],  matr['Z'], matr['Q'], matr['H'], matr['c'], matr['d']   
 
 
     def transit_syst_matrix(self, list_trans, t, matr):
         """
         For the 3D system matrices, the matrix of time t is obtained and put in 
         a np.matrix object.
+
+        Parameters
+        ----------
+        list_trans : list
+            List of transition matrices which are in 3D.
+        t : integer
+            Time t, for the system matrices in 3D.
+        matr : dict
+            System matrices (where some are 3D).
+
+        Returns
+        -------
+        matr : dict
+            System matrices, where the relevant 2D matrix is chosen.
+
         """
+        
         for el in list_trans:
             matr[el] = np.matrix(matr[el][:,:,t])
         return matr
 
 
     def kalman_init(self,y, filter_init, time):
-        """Helper function, which defines all the necessary output matrices and 
-        initialises."""
+        """
+        Helper function, which defines all the necessary output matrices and 
+        initialises.
+
+        Parameters
+        ----------
+        y : array-like
+            Observations data.
+        filter_init : tuple
+            Initialisation of the Kalman filter.
+        time : integer
+            number of Kalman iterations to be done.
+
+        Returns
+        -------
+        at : array-like
+            empty array for at.
+        Pt : array-like
+            empty array for Pt.
+        a : array-like
+            empty array for a.
+        P : array-like
+            empty array for P.
+        F : array-like
+            empty array for F.
+        K : array-like
+            empty array for K.
+        v : array-like
+            empty array for v.
+
+        """
         
+        #get initialisation of the filter
         a_init = np.matrix(filter_init[0])
         P_init = np.matrix(filter_init[1])
     
+        #create empty arrays
         at   = np.zeros((time, a_init.shape[0], a_init.shape[1]))
         Pt   = np.zeros((time, P_init.shape[0], P_init.shape[1]))
         a    = np.zeros((time + 1, a_init.shape[0], a_init.shape[1]))
@@ -391,21 +478,77 @@ class state_spacer():
         F    = np.zeros((time    , y.shape[1], y.shape[1]))
         K    = np.zeros((time    , a_init.shape[1], y.shape[1]))
         v    = np.zeros((time    , y.shape[1], 1))
+        
+        #fill first element with the initialisation
         a[0,:] = a_init
         P[0,:] = P_init
+        
         return at, Pt, a, P, F, K, v
     
     
     def kalman_filter_iteration(self, yt, a, P, Z, T, c, d, H, Q, R, 
                                 v, F, att, Ptt ):
         """
-        Normal Kalman iteration
-        
+        Single iteration of the Kalman filter.         
         v_t = y_t - Z_t*a_t - c_t
         F_t = Z_t*P_t* Z_t' +  H_t
         K_t = T_t*P_t*Z_t'*F_t-1
         a_{t+1} = T_t* a_t + K_t*v_t + d
         P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t' - K_t*F_t*K_t' 
+
+
+        Parameters
+        ----------
+        yt : int or array-like
+            Observation data at time t.
+        a : int or array-like
+            State prediction for time t.
+        P : int or array-like
+            Variance of state prediction for time t.
+        Z : array-like
+            System matrix Zt.
+        T : array-like
+            System matrix Tt.
+        c : array-like
+            System matrix ct.
+        d : array-like
+            System matrix dt.
+        H : array-like
+            System matrix Ht.
+        Q : array-like
+            System matrix Qt.
+        R : array-like
+            System matrix Rt.
+        v : int or array-like
+            Previous prediction error.
+        F : int or array-like
+            Previous prediction error variance.
+        att : int or array-like
+            Previous filtered state (t-1).
+        Ptt : int or array-like
+            Previous filtered state variance (t-1).
+
+        Returns
+        -------
+        v : int or array-like
+            New prediction error.
+        F : int or array-like
+            New prediction error variance.
+        K : int or array-like
+            New K.
+        att : int or array-like
+            New filtered state (time t).
+        Ptt : int or array-like
+            New filtered state variance (time t).
+        at1 : int or array-like
+            New state prediction for t + 1.
+        Pt1 : int or array-like
+            Variance of state prediction for t + 1.
+        c : array-like
+            Just c, no transformation happens in normal Kalman filter.
+        d : array-like
+            Just d, no transformation happens in normal Kalman filter.
+
         """
         
         #v and a are transposed
@@ -426,7 +569,7 @@ class state_spacer():
 
 
     def kalman_filter_iteration_missing(self, yt, a, P, Z, T, c, d, H, Q, R,
-                                v, F, att, Ptt, tol = 1e7 ):
+                                v, F, att, Ptt, tol = 1e7 ):        
         """
         Kalman iteration function in case the observation is missing.
         
@@ -435,6 +578,61 @@ class state_spacer():
         K_t = 0
         a_{t+1} = T_t* a_t + d
         P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t'
+
+        Parameters
+        ----------
+        yt : int or array-like
+            Observation data at time t.
+        a : int or array-like
+            State prediction for time t.
+        P : int or array-like
+            Variance of state prediction for time t.
+        Z : array-like
+            System matrix Zt.
+        T : array-like
+            System matrix Tt.
+        c : array-like
+            System matrix ct.
+        d : array-like
+            System matrix dt.
+        H : array-like
+            System matrix Ht.
+        Q : array-like
+            System matrix Qt.
+        R : array-like
+            System matrix Rt.
+        v : int or array-like
+            Previous prediction error. (not used in the code, placeholder)
+        F : int or array-like
+            Previous prediction error variance. (not used in the code, placeholder)
+        att : int or array-like
+            Previous filtered state (t-1).
+        Ptt : int or array-like
+            Previous filtered state variance (t-1).
+        tol : int or float, optional
+            High value which in theory should go to infinity. The default is 1e7.
+
+        Returns
+        -------
+        v : int or array-like
+            New prediction error.
+        F : int or array-like
+            New prediction error variance.
+        K : int or array-like
+            New K.
+        att : int or array-like
+            New filtered state (time t).
+        Ptt : int or array-like
+            New filtered state variance (time t).
+        at1 : int or array-like
+            New state prediction for t + 1.
+        Pt1 : int or array-like
+            Variance of state prediction for t + 1.
+        c : array-like
+            Just c, no transformation happens in normal Kalman filter.
+        d : array-like
+            Just d, no transformation happens in normal Kalman filter.
+
         """
         
         #v and a are transposed
@@ -455,9 +653,34 @@ class state_spacer():
 
 
     def create_empty_objs(self, yt, H, at, Pt):
-        """Helper function to create certain empty objects, which are later 
-        used in the code.
         """
+        Helper function to create certain empty objects, which are later 
+        used in the code.
+        
+        Parameters
+        ----------
+        yt : array-like
+            Observations.
+        H : array-like
+            H system matrix of time t.
+        at : array-like
+            array in the form of the filtered state.
+        Pt : array-like
+            array in the form of the filtered state variance.
+
+        Returns
+        -------
+        v_obj : array-like
+            empty v array.
+        F_obj : array-like
+            empty F array.
+        att_obj : array-like
+            empty att array.
+        Ptt_obj : array-like
+            empty Ptt array.
+
+        """
+
         v_obj = np.zeros(yt.shape)
         F_obj = np.zeros(H.shape)
         att_obj = np.zeros(at.shape)
@@ -471,40 +694,90 @@ class state_spacer():
         of the filter given. It first gets the processed matrices by calling 
         the helper functions, initialises the output arrays, and then 
         applies the filter.
+
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            Initialisation of the filter.
+        syst_matr : dict
+            Dictionnary containging all the system matrices.
+
+        Returns
+        -------
+        at : array-like
+            Filtered states.
+        Pt : array-like
+            Filtered state variances.
+        a : array-like
+            Filtered state predictions.
+        P : array-like
+            Filtered state prediction variances.
+        v : array-like
+            Filtered prediction errors.
+        F : array-like
+            Filtered prediction error variances.
+        K : array-like
+            Filtered K (convenient result for other computations).
+        newC : array-like
+            same as c in the normal Kalman filter, given for coherence with other 
+            methods.
+        newD : array-like
+            same as d in the normal Kalman filter, given for coherence with other 
+            methods.
         """
-            
+                 
+        #get the length of the array
         time = len(y)
-        
+
+        #convert system arrays to matrices, and get the 3D system matrices
         matrices, list_3d = self.get_matrices(syst_matr)
+        
+        #initialise the Kalman filter
         at, Pt, a, P, F, K, v = self.kalman_init(y, filter_init, time)
         
+        #get the system matrices belonging to the first observation
         t = 0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
         
+        #get an array in the shape of the first observation
         yt = np.zeros(y[t].shape)   
         
+        #initialise the arrays for new c and new d. Not used in the base filter
+        #only here for compability with more advanced filters
         newC = np.zeros((self.matr['c'].shape[0], self.matr['c'].shape[1], time))
         newD = np.zeros((self.matr['d'].shape[0], self.matr['c'].shape[1], time ))
 
+        #create empty objects for the results
         v_obj, F_obj, att_obj, Ptt_obj = self.create_empty_objs(yt, H, a[t], P[t])
                 
+        #check if there is a nan in the observations
         if np.isnan(np.sum(y)):
+            #go over the observation array
             for t in range(time):
+                #get system matrices and the observation at time t
                 T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
                 yt = y[t]
                 
+                #in case the observation is not missing: base iteration
                 if not np.isnan(yt):
                     v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
                                                                                                                     v_obj, F_obj, att_obj, Ptt_obj )
+                #else, the missing observation iteration is performed
                 else:
                     v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration_missing(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
                                                                                                                                 v_obj, F_obj, att_obj, Ptt_obj )
   
+        #this is the workflow if no observations are missing 
         else: 
+            #go over the observation array
             for t in range(time):
+                #get system matrices and the observation at time t
                 T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
                 yt = y[t]
                 
+                #perform base iteration
                 v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
                                                                                                                     v_obj, F_obj, att_obj, Ptt_obj )
                                                                                                                             
@@ -512,12 +785,73 @@ class state_spacer():
     
     
     def kalman_filter(self, y, filter_init):
+        """
+        Function which executes the Kalman filter base, and stores the results 
+        in a dict, which is more convenient for final users.
+
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            Initalisation of the filter.
+
+        Returns
+        -------
+        o : Dict
+            Filter output.
+
+        """
         o = {}
         o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"]  =  self.kalman_filter_base(y, filter_init, self.matr)
         return o
         
     
     def smoothing_iteration(self, v, F, r, T, K, Z, N, P, a):
+        """
+        Single smoothing iteration recursion when the observation is available.
+        Lt+1 = Tt+1 - Kt+1 Zt+1
+        r_t = v_t+1*(F_{t+1}^-1)'*Z_t + r{t+1}*L{t+1}
+        N_t = Z'*F_{t+1}^-1*Z_t + L{t+1}*N{t+1}*L{t+1}
+        alpha{t+1} = a{t+1} + r[t]*P{t+1}'
+        V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
+
+        Parameters
+        ----------
+        v : array-like
+            Prediction error (value of t+1).
+        F : array-like
+            Prediction error variance (value of t+1).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t+1).
+        T : array-like
+            System matrix T (value of t+1).
+        K : array-like
+            Intermediate result K in the filter recursions (value of t+1).
+        Z : array-like
+            System matrix Z (value of t+1).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t+1).
+        P : array-like
+            State prediction variance (value of t+1).
+        a : array-like
+            State prediction (value of t+1).
+
+        Returns
+        -------
+        L : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t).
+        alpha : array-like
+            Smoothed state (value of t).
+        V : array-like
+            Smoothed state variance (value of t).
+
+        """        
+        
         L = T - K*Z
         r= v*np.linalg.inv(F).transpose()*Z + (r*L)
         N = Z.transpose()*np.linalg.inv(F)*Z + L*N*L
@@ -527,38 +861,101 @@ class state_spacer():
 
 
     def smoothing_iteration_missing(self, v, F, r, T, K, Z, N, P, a):    
+        """
+        Single smoothing iteration recursion when the observation is missing.
+        Lt+1 = Tt+1- Kt+1*Zt+1
+        r_t =  r{t+1}*L{t+1}
+        N_t = L{t+1}*N{t+1}*L{t+1}
+        alpha{t+1} = a{t+1} + r[t]*P{t+1}'
+        V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
+
+        Parameters
+        ----------
+        v : array-like
+            Prediction error (value of t+1).
+        F : array-like
+            Prediction error variance (value of t+1).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t+1).
+        T : array-like
+            System matrix T (value of t).
+        K : array-like
+            Intermediate result K in the filter recursions (value of t+1).
+        Z : array-like
+            System matrix Z (value of t).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t+1).
+        P : array-like
+            State prediction variance (value of t+1).
+        a : array-like
+            State prediction (value of t+1).
+            
+        Returns
+        -------
+        L : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t).
+        alpha : array-like
+            Smoothed state (value of t).
+        V : array-like
+            Smoothed state variance (value of t).
+
+        """
+        
         L = T 
         r= r*L
         N = L*N*L
         alpha = a + np.dot(r,P.transpose())
         V = P - P*N*P
+        
         return L, r, N, alpha, V
 
 
-    def get_syst_matrices(self, list_3d, t, matrices):
-        matr = self.transit_syst_matrix(list_3d, t, matrices.copy())
-        T, R, Z, Q, H, c, d = matr['T'], matr['R'],  matr['Z'], matr['Q'], matr['H'], matr['c'], matr['d']   
-        return T, R, Z, Q, H, c, d
     
         
     def smoother_base(self, y, filter_init, return_smoothed_errors=True):
         """
-        Kalman smoothing recursions, based on the system matrices and the initialisation
-        of the filter given. It first gets the processed matrices by calling 
-        the helper functions, initialises the output arrays. Then, it calls the 
-        Kalman filter and uses this to calculate the smoothing recursions. These
-        are given by: 
-            
-        r_t = v_t*(F_{t+1}^-1)'*Z_t + r{t+1}*L{t+1}
-        N_t = Z'*F_{t+1}^-1*Z_t + L{t+1}*N{t+1}*L{t+1}
-        alpha{t+1} = a{t+1} + r[t]*P{t+1}'
-        V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
+        Kalman smoothing recursions, based on the system matrices and the 
+        initialisation of the filter given. It first gets the processed matrices 
+        by calling the helper functions, initialises the output arrays. Then, 
+        it calls the  Kalman filter and uses this to calculate the smoothing 
+        recursions in separate functions, depending on whether the observation
+        is missing or not. The smoothed errors are also computed if indicated.
+
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            Initialisation of the Kalman filter.
+        return_smoothed_errors : boolean, optional
+            Indicates whether the smoothed errors also should be computed. 
+            The default is True.
+
+        Returns
+        -------
+        Kalman smoothing output : several array-like items
+            Output of the Kalman smoother (at, Pt, a, P, v, F, K, newC, newD
+            the same as the output of the Kalman filter). Additionally also
+            alpha, V (smoothed state and smoothed state variance), and r and N
+            (intermediary results) are outputted.
+        Smoothed errors : several array-like items, optional
+            Output of the Kalman smoother. The output consists of u, D (intermediary
+            results), epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
+            observation and state errors and their variances.
+
         """
         
+        #get state matrices         
         matrices, list_3d = self.get_matrices(self.matr)
+        
+        #apply Kalman filter
         at, Pt, a, P, v, F, K, newC, newD =self.kalman_filter_base(y, filter_init, self.matr)
         
-
+        #initialise output arrays
         r = np.zeros((a.shape))
         r[:] = np.nan
         N = np.zeros((P.shape))
@@ -569,43 +966,83 @@ class state_spacer():
         alpha[:] = np.nan
         V = np.zeros(P.shape)
         V[:] = np.nan
-        
         r, N, alpha, V = r[:len(r)-1], N[:len(N)-1], alpha[:len(alpha)-1], V[:len(V)-1]
+        
+        #flow if there are missing observations
         if np.isnan(np.sum(v)):
+            #loop over the observations backwards
             for t in range(len(a)-3, -1,-1):
-                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+                #get the matrices at time t+1
+                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
                 
+                #if the observation is not missing, use the normal recursion
                 if not np.isnan(v[t+1]):
                     L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+            
+                #use missing observation recursion if necessary
                 else: 
                     L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+      
+            #last recursion for alpha and V at time 0
             t = - 1
-            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
     
+            #recursion if observation is not missing
             if not np.isnan(v[t+1]):
                 _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+     
+            #recursion in case of missing observation
             else: 
                 _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
-                print(alpha[t+1])
+
+
+        #flow if no missing observations                
         else: 
+            #loop over the observations backwards
             for t in range(len(a)-3, -1,-1):
-                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
                 
                 L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
 
+            #recursion at time 0 for alpha and V
             t = - 1
-            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
+            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
                 
             _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
 
+        #if the smoothed errors also need to be computed
         if return_smoothed_errors: 
+            #compute smoothed erros
             u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond = self.disturbance_smoothing_errors(v, F, K, r, N, matrices, list_3d)
             return at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N,  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
+     
+        #only return smoother output
         else:
             return at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N
     
     
     def smoother(self,y, filter_init, return_smoothed_errors=True):
+        """
+        Wrapper around the smoother base function, to store results in a dict.
+
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            Initialisation of the Kalman filter.
+        return_smoothed_errors : boolean, optional
+            Indicates whether the smoothed errors also should be computed. 
+            The default is True.
+
+        Returns
+        -------
+        o : dict
+            Kalman smoother output.
+        e : dict
+            Smoothed error output.
+        """
+        
         if return_smoothed_errors:
             o = {}
             e = {}
@@ -617,12 +1054,43 @@ class state_spacer():
             return o
         
     
-    def kalman_llik(self, param, y, matr, param_loc, filter_init, llik_fun = llik_gaussian, diffuse = 0):
+    def kalman_llik(self, param, y, matr, param_loc, filter_init, 
+                    llik_fun = llik_gaussian, diffuse = 0):
         """
-        (Diffuse) loglikelihood function for the Kalman filter system matrices. 
+        Loglikelihood function for the Kalman filter system matrices. 
         The function allows for specification of the elements in the system matrices
-        which are optimised, and which are remained fixed. It is not allowed 
-        to do maximum likelihood on a time-varying parameter.
+        which are optimised, and which are remained fixed. A time-varying system
+        matrix needs to have its parameters which are to be estimated by the 
+        maximum likelihood estimator fixed for the whole period.
+
+        Parameters
+        ----------
+        param : dict
+            Parameter values tried.
+        y : array-like
+            Observation data.
+        matr : dict
+            System matrices used in the evaluation of the likelihood function.
+        param_loc : dict
+            Dictionnary with the locations and matrices of the parameters to 
+            be optimised in the maximum likelihood function.
+        filter_init : tuple
+            initialisation of the filter.
+        llik_fun : function, optional
+            Function used to compute the log likelihood. 
+            The default is llik_gaussian.
+        diffuse : integer, optional
+            Diffuse initialisation of the likelihood function. The default is 0.
+
+        Returns
+        -------
+        llik_fun(v, F) : integer
+            Evaluation of the log likelihood by the given function.
+
+        """
+        
+        
+        """
         """
         
         
@@ -631,7 +1099,8 @@ class state_spacer():
             matr[param_loc[key][0]][param_loc[key][1],param_loc[key][2]] = param[key]
         
         #apply Kalman Filter
-        _, _, _, _, v, F, _, _, _  =  self.kalman_filter_base(y, filter_init, matr)
+        _, _, _, _, v, F, _, _, _  =  self.kalman_filter_base(y, filter_init, 
+                                                              matr)
         
         #first element not used in diffuse likeilhood
         v = v[diffuse:,:,:]
@@ -639,30 +1108,94 @@ class state_spacer():
         return llik_fun(v, F)
         
     
-    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, llik_fun = llik_gaussian):
-        return self.kalman_llik( param, y, matr, param_loc, filter_init, llik_gaussian, diffuse = 1)
+    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, 
+                            llik_fun = llik_gaussian):
+        """
+        Wrapper around the kalman_llik function where diffuse is set to 1.
+
+        Parameters
+        ----------
+        param : dict
+            Parameter values tried.
+        y : array-like
+            Observation data.
+        matr : dict
+            System matrices used in the evaluation of the likelihood function.
+        param_loc : dict
+            Dictionnary with the locations and matrices of the parameters to 
+            be optimised in the maximum likelihood function.
+        filter_init : tuple
+            initialisation of the filter.
+        llik_fun : function, optional
+            Function used to compute the log likelihood. 
+            The default is llik_gaussian.
+
+        Returns
+        -------
+         self.kalman_llik( param, y, matr, param_loc, filter_init, 
+                          llik_gaussian, diffuse = 1) : integer
+            Evaluation of the log likelihood by the given function.
+
+        """
+        return self.kalman_llik(param, y, matr, param_loc, filter_init, 
+                                llik_gaussian, diffuse = 1)
     
     
-    def fit(self, y, fit_method= ml_estimator_matrix, matrix_order = ['T','R','Z','Q','H','c','d'],
-            **fit_kwargs):
+    def fit(self, y, fit_method= ml_estimator_matrix, 
+            matrix_order = ['T','R','Z','Q','H','c','d'], **fit_kwargs):
+        """
+        Fit function for estimating the system matrices based on the observations
+        given. The function collects the parameters which are to be estimated 
+        by looking for np.nan values in the system matrices. 
+
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        fit_method : function, optional
+            Function for the estimation of the parameters. 
+            The default is ml_estimator_matrix.
+        matrix_order : list, optional
+            order of the system matrices. The default is ['T','R','Z','Q','H','c','d'].
+        **fit_kwargs : dict
+            additional arguments necessary for running the fit function.
+
+        Returns
+        -------
+        self : state_spacer object
+            object where the parameters of the state matrices are estimated.
+
+        """
+        
+        #make a dict which contains all parameter locations in the system 
+        #matrices which need to be estimated
         param_loc = {}
+        
+        #go through teh system matrices
         i=0
         for key in  (matrix_order):
+            #get the elements which are np.nan
             nan_location = np.argwhere(np.isnan(self.matr[key]))
+            #add the matrix, as well as the location in the matrix to the dict
+            #with locations
             for loc in nan_location:
                 param_loc[i] = key, loc[0], loc[1]
                 i += 1
-            
+        
+        #apply the fit method to the system matrices
         res = fit_method(y, self.matr, param_loc, **fit_kwargs)
         
+        #get the results of the optimisation
         param = res.x
 
         #get the elements which are optimised in the fit function
         for key in param_loc.keys():
             self.matr[param_loc[key][0]][param_loc[key][1],param_loc[key][2]] = param[key]
         
+        #set boolean showing if the model is fitted to true
         self.fitted = True
         
+        #store information about the fit procedure in the object
         self.fit_parameters["fit_method"] = fit_method
         self.fit_parameters["matrix_order"] = matrix_order
         for kwarg in fit_kwargs.keys():
@@ -670,42 +1203,121 @@ class state_spacer():
         self.fit_parameters["param_loc"] = param_loc
         self.fit_results = res
         
+        #return object
         return self
 
 
     def disturbance_smoothing_errors_iteration(self, H, Q, R, v, F, K, r, N):
+        """
+        Computation of the smoothing errors
+
+        Parameters
+        ----------
+        H : np.matrix
+            System matrix Ht.
+        Q : np.matrix
+            System matrix Qt.
+        R : np.matrix
+            System matrix Rt.
+        v : array-like
+            Prediction error.
+        F : array-like
+            Prediction error variance.
+        K : array-like
+            K (Kalman filter output).
+        r : array-like
+            r (Kalman smoothing output).
+        N : array-like
+            N (Kalman smoothing output).
+
+        Returns
+        -------
+        u : array-like
+            u (intermediary result) of time t.
+        D : array-like
+            D (intermediary result) of time t.
+        epsilon_hat : array-like
+            Estimated observation error of time t.
+        var_epsilon_cond : array-like
+            Estimated observation error variance of time t.
+        eta_hat : array-like
+            Estimated state error of time t.
+        var_eta_cond : array-like
+            Estimated state error variance of time t.
+
+        """
+        #convert arrays to matrices
         v = np.matrix(v)
         F = np.matrix(F)
         K = np.matrix(K)
         r = np.matrix(r)
         N = np.matrix(N)
         
-        # calculate u = v_t/F_t - K_t*r_t
+        # calculate u = v_t*F_t^-1 - K_t*r_t
         u = v * np.linalg.inv(F) - r * K
     
-        # calculate D_t = 1/F_t + K_t^2 * N_t
+        # calculate D_t = F_t^-1 + K_t* N_t*K_t
         D = np.linalg.inv(F) + np.transpose(K) * N * K
 
-        # estimated epsilon_t= sigma2_epsilon * u_t
+        # estimated epsilon_t= H * u_t
         epsilon_hat =  u * np.transpose(H)
     
-        # estimated conditional variance_t epsilon = sigma2_epsilon - D_t *sigma2_epsilon^2
+        # estimated conditional variance_t epsilon = H - H*D_t *H
         var_epsilon_cond = H - H* D * H
     
-        # estimated eta_t= sigma2_eta * r_t
+        # estimated eta_t= Q*R' * r_t
         eta_hat = r * R * np.transpose(Q)
     
-        # estimated conditional variance_t eta = sigma2_eta - N_t *sigma2_eta^2
+        # estimated conditional variance_t eta = Q - Q*R'* N_t *R*Q
         var_eta_cond = Q - Q * np.transpose(R) * N * R * Q
     
         return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
 
 
     def disturbance_smoothing_errors(self,  v, F, K, r, N, matrices, list_3d):
+        """
+        Function regulating the flow of computing the smoothingerrors
+
+        Parameters
+        ----------
+        v : array-like
+            Prediction error.
+        F : array-like
+            Prediction error variance.
+        K : array-like
+            K (Kalman filter output).
+        r : array-like
+            r (Kalman smoothing output).
+        N : array-like
+            N (Kalman smoothing output).
+        matrices : dict
+            System matrices.
+        list_3d : list
+            List of 3D matrices.
+
+        Returns
+        -------
+        u : array-like
+            u (intermediary result).
+        D : array-like
+            D (intermediary result).
+        epsilon_hat : array-like
+            Estimated observation error.
+        var_epsilon_cond : array-like
+            Estimated observation error variance.
+        eta_hat : array-like
+            Estimated state error.
+        var_eta_cond : array-like
+            Estimated state error variance.
+
+        """
+        #get the first system matrices for setting the array dimensions
         _, _, _, Q, H, _, _ = self.get_syst_matrices(list_3d, 0, matrices.copy())
 
-                
+        #get the length of the series
         time = len(v)
+        
+        #initialisation of the arrays
         u   = np.zeros((time, (v).shape[1], (np.linalg.inv(F)).shape[1]))
         D = np.zeros((time, np.linalg.inv(F).shape[1], np.linalg.inv(F).shape[1]))
         epsilon_hat = np.zeros((time,  v.shape[1], H.shape[1]))
@@ -713,6 +1325,7 @@ class state_spacer():
         eta_hat = np.zeros((time,  r.shape[1], Q.shape[1]))
         var_eta_cond = np.zeros((time,  (Q).shape[0], (Q).shape[1]))
         
+        #for each time, compute the errors
         for t in range(len(v)):
             _, R, _, Q, H, _, _ = self.get_syst_matrices(list_3d, t, matrices.copy())
             u[t], D[t],  epsilon_hat[t], var_epsilon_cond[t],  eta_hat[t],  var_eta_cond[t] = self.disturbance_smoothing_errors_iteration(H, Q, R, v[t], F[t], K[t], r[t], N[t])
@@ -721,57 +1334,118 @@ class state_spacer():
 
 
     def simulation_smoother_one(self, y, filter_init, eta, epsilon, dist_fun_alpha1):
-        matrices, list_3d = self.get_matrices(self.matr)
+        """
+        Implementation of the simulation smoother. Compute a single path of 
+        alpha_tilde.
 
-        a1, P1 = filter_init
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            filter initalisation.
+        eta : array-like
+            Series of simulated state errors.
+        epsilon : array-like
+            Series of simulated observation errors.
+        dist_fun_alpha1 : function
+            distribution of the first element of alpha.
+
+        Returns
+        -------
+        alpha_tilde : simulated path of alpha.
+
+        """
+        #get matrices
+        matrices, list_3d = self.get_matrices(self.matr)
+        
+        #determine the number of states
         states = self.matr['T'].shape[1]
+        
+        #initialise arrays
         alphaplus = np.zeros((len(y), states))
         yplus = np.zeros(y.shape)
+    
+        #unpack filter initialisation
+        a1, P1 = filter_init
         
+        #get first system matrices
         t=0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+        
+        #compute the alpha+1 and y+1
       #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
         alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-
      #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
         yplus[t] = c + alphaplus[t]*np.transpose(Z)  + np.linalg.cholesky(H)*epsilon[t]
+        
+        #create alpha+ and y+ iteratively
         for t in range(len(alphaplus)-1):
             T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
             alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*np.linalg.cholesky(Q)*eta[t].reshape(-1,1))
-
            # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
             yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
             
+        #compute y_tilde
         y_tilde = y - yplus
 
-       # at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-        o = {}
-        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"] =  self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-        alpha = o["alpha"]
-        plt.plot(alpha.reshape(-1,1))
-        plt.show()
+        #run the KFS on y_tilde
+        at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+
+        #compute alpha tilde        
         alpha_tilde = alphaplus + alpha.reshape(-1,states)
 
         return alpha_tilde
 
     
-    def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, **kwargs):
-        states = self.matr['T'].shape[1]
+    def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, 
+                            **kwargs):
+        """
+        Computes n paths of alpha_tilde via simulation smoothing.        
 
-        eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            filter initalisation.
+        n : integer
+            number of paths to be simulated.
+        dist_fun_alpha1 : function, optional
+            distribution of alpha1. The default is None.
+        **kwargs : dict
+            DESCRIPTION.
+
+        Returns
+        -------
+        alpha_tilde_array : array-like
+            array of simulated paths of alpha_tilde.
+
+        """
+        #determine the number of states
+        states = self.matr['T'].shape[1]
+        
+        #in case no distribution is given, alpha1 is assumed to be normally 
+        #distributed (potentially multivariate).
         if dist_fun_alpha1 is None:
             if self.matr['R'].shape[1] > 1:
                 dist_fun_alpha1 = np.random.multivariate_normal
             else:
                 dist_fun_alpha1 = np.random.normal
         
-
+        #change the form of the error term array to have n simulations
         eps_shape = list(y.shape)
         eps_shape.append(n)
         eps_shape = tuple(eps_shape)
+        
+        #simulate error terms
         epsilon = np.random.normal(0,1, size=eps_shape)
+        eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
+
+        #initialise the alpha tilde array
         alpha_tilde_array = np.zeros((len(y), states,n))
-        print(alpha_tilde_array.shape)
+
+        #compute the smoothed paths one by one
         for i in range(n):
             alpha_tilde_array[:,:,i] = self.simulation_smoother_one(y, filter_init, eta[:,:,i], epsilon[:,:,i], dist_fun_alpha1, **kwargs)
         
@@ -781,28 +1455,46 @@ class state_spacer():
     
     # A method for saving object data to JSON file
     def save_json(self, filepath):
+        """
+        Method for saving a state_spacer object on a file path. Works not 
+        perfectly, as some of the optimization parts cannot easily be stored
+
+        Parameters
+        ----------
+        filepath : string
+            filepath where object is saved.
+
+        Returns
+        -------
+        None.
+
+        """
+        
+        #stringify 
         self.fit_results['message'] = str(self.fit_results['message'])
 
+        #make dict with the necessary elements
         dict_ = {}
         dict_['fitted'] = self.fitted
         dict_['matr'] = {}
         dict_['fit_results'] = {}
         dict_['fit_parameters'] = {}
         
+        #save all the save matrices
         for matrix in self.matr.keys():
             dict_['matr'][matrix] = self.matr[matrix].tolist()
         
+        #save the fit results (bit ugly because of their structure)
         for key in self.fit_results.keys():
             if key == "hess_inv":
                 dict_['fit_results'][key] = {}
                 for hess_key in  self.fit_results[key].__dict__.keys():
                     if type(self.fit_results[key].__dict__[hess_key]) is not np.dtype:
                         dict_['fit_results'][key][hess_key] = self.fit_results[key].__dict__[hess_key]
-                    print(self.fit_results[key].__dict__[hess_key])
             else: 
-                
                 dict_['fit_results'][key] = self.fit_results[key]
                 
+        #add the parameter keys
         for key in self.fit_parameters.keys():
             if callable(self.fit_parameters[key]):
                 dict_['fit_parameters'][key] = self.fit_parameters[key].__name__
@@ -815,28 +1507,61 @@ class state_spacer():
         
         with open(filepath, 'w') as file:
             file.write(json_txt)
-            
+        print('Object stored under ' + filepath)
     
     # A method for loading data from JSON file
     def load_json(self, filepath):
+        """
+        method for loading state space model by a json file.
+
+        Parameters
+        ----------
+        filepath : string
+            file path of the object.
+
+        Returns
+        -------
+        None.
+
+        """
+        #read in json data
         with open(filepath, 'r') as file:
             dict_ = json.load(file)
             
+        #get fitted info 
         self.fitted = dict_['fitted'] 
+        
+        #get matrix info
         for matrix in dict_['matr'].keys():
             self.matr[matrix] = np.asarray(dict_["matr"][matrix]) if dict_["matr"][matrix] != 'None' else None
 
+        #get fit results info
         for key in dict_['fit_results'].keys():
             self.fit_results[key] = dict_['fit_results'][key]  if dict_['fit_results'][key]  != 'None' else None
 
+        #get fit parameter info
         for key in dict_['fit_parameters'].keys():
             self.fit_parameters[key] = dict_['fit_parameters'][key] if dict_['fit_parameters'][key] != 'None' else None
 
 
     def save_matrices_json(self, filepath):
+        """
+        Method which only saves the matrices in a json file.
 
+        Parameters
+        ----------
+        filepath : string
+            file path where object is stored.
+
+        Returns
+        -------
+        None.
+
+        """
+        
         dict_ = {}
         
+        #save matrices
         for matrix in self.matr.keys():
             dict_['matr'][matrix] = self.matr[matrix].tolist()
             
@@ -844,22 +1569,44 @@ class state_spacer():
         # Creat json and save to file
         json_txt = json.dumps(dict_, cls=NpEncoder, indent=4)
         
+        #write info in file
         with open(filepath, 'w') as file:
             file.write(json_txt)
             
     
-    # A method for loading data from JSON file
-    def load_matrices(self, filepath):
+    def load_matrices(self, filepath, previously_fitted=False):
+        """
+        Method which only reads in the system matrices and overwrites all other
+        info.
+
+        Parameters
+        ----------
+        filepath : string
+            file path where object is stored.
+        previously_fitted : boolean, optional
+            Whether or not the matrices were fitted before. The default is False.
+
+        Returns
+        -------
+        None.
+
+        """
+   
+        #open filepath
         with open(filepath, 'r') as file:
             dict_ = json.load(file)
             
-        self.fitted = dict_['fitted'] 
+        #read in the matrices
         for matrix in dict_['matr'].keys():
             self.matr[matrix] = np.asarray(dict_["matr"][matrix]) if dict_["matr"][matrix] != 'None' else None
 
+        self.fit_parameters = {}
+        self.fit_results = {}
+        self.fitted = previously_fitted
 
 
 
+#helper class for json encoding
 class NpEncoder(json.JSONEncoder):
     def default(self, obj):
         if isinstance(obj, np.integer):
