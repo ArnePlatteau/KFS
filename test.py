@@ -23,13 +23,13 @@ if __name__ == "__main__":
     y = np.append(y, period, axis = 0)
     
     #number of simulations in simulation smoother
-    nsim = 200
+    nsim = 1000
     
     #create state_space object
     Nile_filter = state_spacer()
     
     #choose model specification
-    simple_model = False
+    simple_model = True
     
     if simple_model:
         #set the function and initialisation of the matrices
@@ -52,8 +52,6 @@ if __name__ == "__main__":
 
         #estimate MLE parameters
         bnds = ((0.1, 50000),(0.1, 50000))
-        Nile_filter.fit(y, kalman_llik=kalman_llik,
-                        filter_init=filter_init, param_init=param_init, bnds=bnds)
 
         
     else:
@@ -85,17 +83,18 @@ if __name__ == "__main__":
     output, errors = o['output'], o['errors']
         
 
-
-    #test the simulation smoother
-    simulations = Nile_filter.simulation_smoother(y, filter_init, nsim)
     
+    #test the simulation smoother
+    #simulations = Nile_filter.simulation_smoother(y, filter_init, nsim)
+    
+    simulations = Nile_filter.simulation_smoother_2(y, filter_init, nsim)
     #plot simulated paths and actual alpha
     for i in range(nsim):
-        plt.plot(simulations[:,:,i],c='grey')
+        plt.plot(simulations[:,:,i],c='grey', alpha =0.2)
     for i in range(output['alpha'].shape[2]):
-        plt.plot(output['alpha'][:,:,i])
+        plt.plot(output['alpha'][:,:,i], c='blue')
     plt.show()
-
+    
 
 
 

@@ -1440,7 +1440,7 @@ class state_spacer():
         #simulate error terms
         epsilon = np.random.normal(0,1, size=eps_shape)
         eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
-
+                
         #initialise the alpha tilde array
         alpha_tilde_array = np.zeros((len(y), states,n))
 
@@ -1451,6 +1451,160 @@ class state_spacer():
         return alpha_tilde_array
     
     
+    def simulation_smoother_2(self, y, filter_init, n, dist_fun_alpha1=None, 
+                            **kwargs):
+            """
+            Computes n paths of alpha_tilde via simulation smoothing.        
+    
+            Parameters
+            ----------
+            y : array-like
+                Observation data.
+            filter_init : tuple
+                filter initalisation.
+            n : integer
+                number of paths to be simulated.
+            dist_fun_alpha1 : function, optional
+                distribution of alpha1. The default is None.
+            **kwargs : dict
+                DESCRIPTION.
+    
+            Returns
+            -------
+            alpha_tilde_array : array-like
+                array of simulated paths of alpha_tilde.
+    
+            """
+            #determine the number of states
+            states = self.matr['T'].shape[1]
+            
+            #in case no distribution is given, alpha1 is assumed to be normally 
+            #distributed (potentially multivariate).
+            if dist_fun_alpha1 is None:
+                if self.matr['R'].shape[1] > 1:
+                    dist_fun_alpha1 = np.random.multivariate_normal
+                else:
+                    dist_fun_alpha1 = np.random.normal
+            
+            #change the form of the error term array to have n simulations
+            eps_shape = list(y.shape)
+            eps_shape.append(n)
+            eps_shape = tuple(eps_shape)
+            
+            #simulate error terms
+            epsilon = np.random.normal(0,1, size=eps_shape)
+            eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
+                    
+            #initialise the alpha tilde array
+            alpha_tilde_array = np.zeros((len(y), states,n))
+            
+            
+            #get matrices
+            matrices, list_3d = self.get_matrices(self.matr)
+
+            #initialise arrays
+            alphaplus = np.zeros((len(y), states,n))
+            yplus = np.zeros((y.shape[0], y.shape[1],n))
+        
+            #unpack filter initialisation
+            a1, P1 = filter_init
+            
+            t=0
+            T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+            print( dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).shape)
+            alphaplus[t]  = (d + dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T  )
+            yplus[t] = c + Z*alphaplus[t]  + epsilon[t]
+            
+            for t in range(len(alphaplus)-1):
+                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+                eta[t] = np.linalg.cholesky(Q)*np.matrix(eta[t])       
+                epsilon[t] = np.linalg.cholesky(H)*np.matrix(epsilon[t]) 
+                
+                alphaplus[t+1] = d +  T*alphaplus[t] + R*eta[t]
+                # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
+                yplus[t+1] = c + Z*alphaplus[t+1] + epsilon[t+1]
+
+                
+                
+            #compute the smoothed paths one by one
+            for i in range(n):
+                y_tilde = y - yplus[:,:,i]
+
+                #run the KFS on y_tilde
+                at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+        
+                #compute alpha tilde        
+                alpha_tilde_array[:,:,i] = alphaplus[:,:,i] + alpha.reshape(-1,states)
+
+                #alpha_tilde_array[:,:,i] = self.simulation_smoother_three(y, filter_init, alphaplus[:,:,i], epsilon[:,:,i], dist_fun_alpha1, **kwargs)
+            
+            return alpha_tilde_array
+ 
+    
+    def simulation_smoother_three(self, y, filter_init, eta, epsilon, dist_fun_alpha1):
+        """
+        Implementation of the simulation smoother. Compute a single path of 
+        alpha_tilde.
+
+        Parameters
+        ----------
+        y : array-like
+            Observation data.
+        filter_init : tuple
+            filter initalisation.
+        eta : array-like
+            Series of simulated state errors.
+        epsilon : array-like
+            Series of simulated observation errors.
+        dist_fun_alpha1 : function
+            distribution of the first element of alpha.
+
+        Returns
+        -------
+        alpha_tilde : simulated path of alpha.
+
+        """
+        #get matrices
+        matrices, list_3d = self.get_matrices(self.matr)
+        
+        #determine the number of states
+        states = self.matr['T'].shape[1]
+        
+        #initialise arrays
+        alphaplus = np.zeros((len(y), states))
+        yplus = np.zeros(y.shape)
+    
+        #unpack filter initialisation
+        a1, P1 = filter_init
+        
+        #get first system matrices
+        t=0
+        T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+        
+        #compute the alpha+1 and y+1
+      #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
+        alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
+     #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
+        yplus[t] = c + alphaplus[t]*np.transpose(Z)  + epsilon[t]
+        
+        #create alpha+ and y+ iteratively
+        for t in range(len(alphaplus)-1):
+            T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+            alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*eta[t].reshape(-1,1))
+           # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
+            yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])
+            
+        #compute y_tilde
+        y_tilde = y - yplus
+
+        #run the KFS on y_tilde
+        at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
+
+        #compute alpha tilde        
+        alpha_tilde = alphaplus + alpha.reshape(-1,states)
+
+        return alpha_tilde
+
     
     # A method for saving object data to JSON file
     def save_json(self, filepath):
