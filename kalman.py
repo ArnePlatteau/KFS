@@ -9,7 +9,8 @@ Created on Fri Jun  4 11:07:16 2021
 from scipy import optimize
 import numpy as np
 import json
-import matplotlib.pyplot as plt
+from scipy.stats import norm
+
  
 def llik_gaussian(v, F):
     """
@@ -559,7 +560,7 @@ class state_spacer():
         K = T*M
         
         att = a + v*M.transpose()
-        Ptt = P - M.transpose()*P*M
+        Ptt = P - M*F*M.transpose()
         
         at1 = a*T.transpose() + v*K.transpose() + d.transpose()
         Pt1 = T*P*T.transpose() + R*Q*R.transpose() - K*F*K.transpose()
@@ -635,7 +636,7 @@ class state_spacer():
         """
         
         #v and a are transposed
-        v = yt
+        v = yt*np.nan
     
         #F, P and K are not transposed
         F = np.matrix(np.ones(H.shape)*tol)
@@ -853,7 +854,7 @@ class state_spacer():
         
         L = T - K*Z
         r= v*np.linalg.inv(F).transpose()*Z + (r*L)
-        N = Z.transpose()*np.linalg.inv(F)*Z + L*N*L
+        N = Z.transpose()*np.linalg.inv(F)*Z + L.transpose()*N*L
         alpha = a + np.dot(r,P.transpose())
         V = P - P*N*P
         return L, r, N, alpha, V
@@ -906,7 +907,7 @@ class state_spacer():
         
         L = T 
         r= r*L
-        N = L*N*L
+        N = L.transpose()*N*L
         alpha = a + np.dot(r,P.transpose())
         V = P - P*N*P
         
@@ -1049,11 +1050,47 @@ class state_spacer():
             return {'output' : o, 'errors' : e}
         else:
             o = {}
-            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"]  =  self.smoother_base(y, filter_init)
+            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"]  =  self.smoother_base(y, filter_init, return_smoothed_errors=False)
             return o
         
     
-    def kalman_llik(self, param, y, matr, param_loc, filter_init, 
+    def kalman_filter_CI(self, y, filter_init, conf=0.9):
+        alpha_div2 = (1 - conf)/2
+        n = norm.ppf(1 - alpha_div2) 
+        
+        o = {}
+        o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"] = self.kalman_filter_base(y, filter_init, self.matr)
+        o['CI_filtered_' + str(conf) + "_lower"] = o["at"] - n*np.linalg.cholesky(o["Pt"])
+
+        o['CI_filtered_' + str(conf)  + "_upper"] = o["at"] + n*np.linalg.cholesky(o["Pt"])
+        
+        return o
+       
+    
+    def kalman_smoother_CI(self, y, filter_init, conf=0.9, return_smoothed_errors=True):
+        alpha_div2 = (1 - conf)/2
+        n = norm.ppf(1 - alpha_div2) 
+        
+        if return_smoothed_errors:
+            o = {}
+            e = {}
+            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"], e['u'], e['D'],  e['epsilon_hat'], e['var_epsilon_cond'],  e['eta_hat'],  e['var_eta_cond']  =  self.smoother_base(y, filter_init)
+        else:
+            o = {}
+            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"]  =  self.smoother_base(y, filter_init)
+
+        o['CI_filtered_' + str(conf) + "_lower"] = o["at"] - n*np.linalg.cholesky(o["Pt"])
+        o['CI_filtered_' + str(conf)  + "_upper"] = o["at"] + n*np.linalg.cholesky(o["Pt"])
+        o['CI_smoothed_' + str(conf) + "_lower"] = o["alpha"] - n*np.linalg.cholesky(o["V"])
+        o['CI_smoothed_' + str(conf)  + "_upper"] = o["alpha"] + n*np.linalg.cholesky(o["V"])
+        
+        try: 
+            return {'output' : o, 'errors' : e}
+        except NameError:
+            return o
+  
+    
+    def kalman_llik_base(self, param, y, matr, param_loc, filter_init, 
                     llik_fun = llik_gaussian, diffuse = 0):
         """
         Loglikelihood function for the Kalman filter system matrices. 
@@ -1086,12 +1123,7 @@ class state_spacer():
         llik_fun(v, F) : integer
             Evaluation of the log likelihood by the given function.
 
-        """
-        
-        
-        """
-        """
-        
+        """        
         
         #get the elements which are optimised in the ML function
         for key in param_loc.keys():
@@ -1101,16 +1133,17 @@ class state_spacer():
         _, _, _, _, v, F, _, _, _  =  self.kalman_filter_base(y, filter_init, 
                                                               matr)
         
-        #first element not used in diffuse likeilhood
+        #first element not used in diffuse likelihood
         v = v[diffuse:,:,:]
         F = F[diffuse:,:,:]
+
         return llik_fun(v, F)
         
     
-    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, 
-                            llik_fun = llik_gaussian):
+    def kalman_llik(self, param, y, matr, param_loc, filter_init, 
+                            llik_fun = llik_gaussian, diffuse=0):
         """
-        Wrapper around the kalman_llik function where diffuse is set to 1.
+        Wrapper around the kalman_llik_base function where diffuse is set to 0.
 
         Parameters
         ----------
@@ -1131,12 +1164,45 @@ class state_spacer():
 
         Returns
         -------
-         self.kalman_llik( param, y, matr, param_loc, filter_init, 
+         self.kalman_llik_base( param, y, matr, param_loc, filter_init, 
                           llik_gaussian, diffuse = 1) : integer
             Evaluation of the log likelihood by the given function.
 
         """
-        return self.kalman_llik(param, y, matr, param_loc, filter_init, 
+        return self.kalman_llik_base(param, y, matr, param_loc, filter_init, 
+                                llik_gaussian, diffuse = diffuse)
+
+    
+    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, 
+                            llik_fun = llik_gaussian):
+        """
+        Wrapper around the kalman_llik_base function where diffuse is set to 1.
+
+        Parameters
+        ----------
+        param : dict
+            Parameter values tried.
+        y : array-like
+            Observation data.
+        matr : dict
+            System matrices used in the evaluation of the likelihood function.
+        param_loc : dict
+            Dictionnary with the locations and matrices of the parameters to 
+            be optimised in the maximum likelihood function.
+        filter_init : tuple
+            initialisation of the filter.
+        llik_fun : function, optional
+            Function used to compute the log likelihood. 
+            The default is llik_gaussian.
+
+        Returns
+        -------
+         self.kalman_llik_base( param, y, matr, param_loc, filter_init, 
+                          llik_gaussian, diffuse = 1) : integer
+            Evaluation of the log likelihood by the given function.
+
+        """
+        return self.kalman_llik_base(param, y, matr, param_loc, filter_init, 
                                 llik_gaussian, diffuse = 1)
     
     
@@ -1174,13 +1240,16 @@ class state_spacer():
         i=0
         for key in  (matrix_order):
             #get the elements which are np.nan
-            nan_location = np.argwhere(np.isnan(self.matr[key]))
+            nan_location = np.argwhere(np.isnan(self.matr[key]))[:,[0,1]]
+            if len(nan_location):
+                nan_location = np.unique(np.argwhere(np.isnan(self.matr[key]))[:,[0,1]],axis=0)
+
             #add the matrix, as well as the location in the matrix to the dict
             #with locations
             for loc in nan_location:
                 param_loc[i] = key, loc[0], loc[1]
                 i += 1
-        
+
         #apply the fit method to the system matrices
         res = fit_method(y, self.matr, param_loc, **fit_kwargs)
         
@@ -1271,7 +1340,9 @@ class state_spacer():
         var_eta_cond = Q - Q * np.transpose(R) * N * R * Q
     
         return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
+    
 
+        
 
     def disturbance_smoothing_errors(self,  v, F, K, r, N, matrices, list_3d):
         """
@@ -1497,113 +1568,53 @@ class state_spacer():
                     
             #initialise the alpha tilde array
             alpha_tilde_array = np.zeros((len(y), states,n))
-            
-            
-            #get matrices
-            matrices, list_3d = self.get_matrices(self.matr)
 
             #initialise arrays
             alphaplus = np.zeros((len(y), states,n))
             yplus = np.zeros((y.shape[0], y.shape[1],n))
-        
-            #unpack filter initialisation
-            a1, P1 = filter_init
-            
-            t=0
-            T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-            print( dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).shape)
-            alphaplus[t]  = (d + dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T  )
-            yplus[t] = c + Z*alphaplus[t]  + epsilon[t]
-            
-            for t in range(len(alphaplus)-1):
-                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-                eta[t] = np.linalg.cholesky(Q)*np.matrix(eta[t])       
-                epsilon[t] = np.linalg.cholesky(H)*np.matrix(epsilon[t]) 
-                
-                alphaplus[t+1] = d +  T*alphaplus[t] + R*eta[t]
-                # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
-                yplus[t+1] = c + Z*alphaplus[t+1] + epsilon[t+1]
-
-                
-                
+              
+            alphaplus, yplus = self.simulation_smoother_three(dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta, **kwargs)
+            at, Pt, a, P, v, F, K, newC, newD, alpha_orig, V, r, N  = self.smoother_base(y, filter_init,return_smoothed_errors=False)
             #compute the smoothed paths one by one
             for i in range(n):
                 y_tilde = y - yplus[:,:,i]
 
                 #run the KFS on y_tilde
                 at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-        
-                #compute alpha tilde        
+                #compute alpha tilde      
                 alpha_tilde_array[:,:,i] = alphaplus[:,:,i] + alpha.reshape(-1,states)
+
 
                 #alpha_tilde_array[:,:,i] = self.simulation_smoother_three(y, filter_init, alphaplus[:,:,i], epsilon[:,:,i], dist_fun_alpha1, **kwargs)
             
             return alpha_tilde_array
  
     
-    def simulation_smoother_three(self, y, filter_init, eta, epsilon, dist_fun_alpha1):
-        """
-        Implementation of the simulation smoother. Compute a single path of 
-        alpha_tilde.
+    def simulation_smoother_three(self,dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta):
 
-        Parameters
-        ----------
-        y : array-like
-            Observation data.
-        filter_init : tuple
-            filter initalisation.
-        eta : array-like
-            Series of simulated state errors.
-        epsilon : array-like
-            Series of simulated observation errors.
-        dist_fun_alpha1 : function
-            distribution of the first element of alpha.
-
-        Returns
-        -------
-        alpha_tilde : simulated path of alpha.
-
-        """
-        #get matrices
         matrices, list_3d = self.get_matrices(self.matr)
-        
-        #determine the number of states
-        states = self.matr['T'].shape[1]
-        
-        #initialise arrays
-        alphaplus = np.zeros((len(y), states))
-        yplus = np.zeros(y.shape)
-    
-        #unpack filter initialisation
         a1, P1 = filter_init
-        
-        #get first system matrices
+        a1 = np.zeros((np.array(a1).shape))
         t=0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+        alphaplus[t]  = dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T
+        yplus[t] =  Z*alphaplus[t]  + epsilon[t]
+      #  alphaplus[t]  = dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T
+      #  yplus[t] = c + Z*alphaplus[t]  + epsilon[t]
         
-        #compute the alpha+1 and y+1
-      #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-        alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-     #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
-        yplus[t] = c + alphaplus[t]*np.transpose(Z)  + epsilon[t]
-        
-        #create alpha+ and y+ iteratively
         for t in range(len(alphaplus)-1):
             T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-            alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*eta[t].reshape(-1,1))
-           # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
-            yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])
+            eta[t] = np.linalg.cholesky(Q)*np.matrix(eta[t])       
+            epsilon[t] = np.linalg.cholesky(H)*np.matrix(epsilon[t]) 
             
-        #compute y_tilde
-        y_tilde = y - yplus
+            alphaplus[t+1] =  T*alphaplus[t] + R*eta[t]
+            yplus[t+1] =  Z*alphaplus[t+1] + epsilon[t+1]
+            
+            #alphaplus[t+1] = d + T*alphaplus[t] + R*eta[t]
+            # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
+            #yplus[t+1] = c + Z*alphaplus[t+1] + epsilon[t+1]
 
-        #run the KFS on y_tilde
-        at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-
-        #compute alpha tilde        
-        alpha_tilde = alphaplus + alpha.reshape(-1,states)
-
-        return alpha_tilde
+        return alphaplus, yplus
 
     
     # A method for saving object data to JSON file

@@ -208,10 +208,9 @@ class eStateSpacer(StateSpacer):
         """
 
 
-        Z_new = np.matrix(self.get_Z_dot(a, Z))
-
+        """
         c = np.matrix(c + self.get_Z(a, Z) - a*self.get_Z_dot(a, Z).transpose())
-
+        
         #v and a are transposed
         v = yt -a*Z_new.transpose() - c.transpose() 
         #F, P and K are not transposed
@@ -220,14 +219,31 @@ class eStateSpacer(StateSpacer):
         K = T*M
         
         att = a + v*M.transpose()
-        Ptt = P - M.transpose()*P*M
+        Ptt = P - M.transpose()*F*M
         
         T_new = np.matrix(self.get_T_dot(att, T))        
         d = np.matrix(d + self.get_T(att, T).transpose() - self.get_T_dot(att, T)*att.transpose())
         
         at1 = a*T_new.transpose() + v*K.transpose() + d.transpose()
         Pt1 = T_new*P*T_new.transpose() + R*Q*R.transpose() - K*F*K.transpose()
+        """
+      
+        T_new = np.matrix(self.get_T_dot(att, T))        
+        Z_new = np.matrix(self.get_Z_dot(a, Z))
         
+        v = yt - self.get_Z(a, Z).transpose() - c.transpose() 
+        #F, P and K are not transposed
+        F = Z_new*P*Z_new.transpose() + H
+        M = P*Z_new.transpose()*np.linalg.inv(F)
+        K = T_new*M
+        
+        att = a + v*M.transpose()
+        Ptt = P - M.transpose()*F*M
+        
+        #     d = np.matrix(d + self.get_T(att, T).transpose() - self.get_T_dot(att, T)*att.transpose())
+        
+        at1 = self.get_T(att, T) + d
+        Pt1 = T_new*Ptt*T_new.transpose() + R*Q*R.transpose() 
         return v, F, K, att, Ptt, at1, Pt1, c, d 
 
 
@@ -297,7 +313,7 @@ class eStateSpacer(StateSpacer):
             Just d, no transformation happens in normal Kalman filter.
 
         """
-        
+        """
         c = np.matrix(c + self.get_Z(a, Z) - a*self.get_Z_dot(a, Z).transpose())
 
         #v and a are transposed
@@ -315,44 +331,169 @@ class eStateSpacer(StateSpacer):
         
         at1 = a*T_new.transpose() + d.transpose()
         Pt1 = T_new*P*T_new.transpose() + R*Q*R.transpose()
+        """
 
+
+        T_new = np.matrix(self.get_T_dot(att, T))        
+        Z_new = np.matrix(self.get_Z_dot(a, Z))
+        
+        v = yt*np.nan
+        #F, P and K are not transposed
+        F = np.matrix(np.ones(H.shape)*tol)
+        M = np.matrix(np.zeros((P*Z_new.transpose()*np.linalg.inv(F)).shape)) #set zeros
+        K = T_new*M
+        
+        att = a 
+        Ptt = P
+        
+        
+        at1 = self.get_T(att, T) + d
+        Pt1 = T_new*Ptt*T_new.transpose() + R*Q*R.transpose() 
 
         return v, F, K, att, Ptt, at1, Pt1, c, d
 
-    
-        def simulation_smoother_one(self, y, filter_init, eta, epsilon, 
-                                    dist_fun_alpha1, alpha_fun, y_fun):
-            """work in progress"""
-            matrices, list_3d = self.get_matrices(self.matr)
-    
-            a1, P1 = filter_init
-            states = self.matr['T'].shape[1]
-            alphaplus = np.zeros((len(y), states))
-            yplus = np.zeros(y.shape)
+
+    def smoothing_iteration(self, v, F, r, T, K, Z, N, P, a):
+        """
+        Single smoothing iteration recursion when the observation is available.
+        Lt+1 = Tt+1 - Kt+1 Zt+1
+        r_t = v_t+1*(F_{t+1}^-1)'*Z_t + r{t+1}*L{t+1}
+        N_t = Z'*F_{t+1}^-1*Z_t + L{t+1}*N{t+1}*L{t+1}
+        alpha{t+1} = a{t+1} + r[t]*P{t+1}'
+        V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
+
+        Parameters
+        ----------
+        v : array-like
+            Prediction error (value of t+1).
+        F : array-like
+            Prediction error variance (value of t+1).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t+1).
+        T : array-like
+            System matrix T (value of t+1).
+        K : array-like
+            Intermediate result K in the filter recursions (value of t+1).
+        Z : array-like
+            System matrix Z (value of t+1).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t+1).
+        P : array-like
+            State prediction variance (value of t+1).
+        a : array-like
+            State prediction (value of t+1).
+
+        Returns
+        -------
+        L : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t).
+        alpha : array-like
+            Smoothed state (value of t).
+        V : array-like
+            Smoothed state variance (value of t).
+
+        """        
+        Z_new = np.matrix(self.get_Z_dot(a, Z))
+
+        M = P*Z_new.transpose()*np.linalg.inv(F)
+        att = a + v*M.transpose()
+        
+        T_new = np.matrix(self.get_T_dot(att, T))        
+        
+
+        L_new = T_new - K*Z_new
+        r= v*np.linalg.inv(F).transpose()*Z_new + (r*L_new)
+        N = Z_new.transpose()*np.linalg.inv(F)*Z_new + L_new.transpose()*N*L_new
+        alpha = a + np.dot(r,P.transpose())
+        V = P - P*N*P
+        return L_new, r, N, alpha, V
+
+
+    def smoothing_iteration_missing(self, v, F, r, T, K, Z, N, P, a):    
+        """
+        Single smoothing iteration recursion when the observation is missing.
+        Lt+1 = Tt+1- Kt+1*Zt+1
+        r_t =  r{t+1}*L{t+1}
+        N_t = L{t+1}*N{t+1}*L{t+1}
+        alpha{t+1} = a{t+1} + r[t]*P{t+1}'
+        V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
+
+        Parameters
+        ----------
+        v : array-like
+            Prediction error (value of t+1).
+        F : array-like
+            Prediction error variance (value of t+1).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t+1).
+        T : array-like
+            System matrix T (value of t).
+        K : array-like
+            Intermediate result K in the filter recursions (value of t+1).
+        Z : array-like
+            System matrix Z (value of t).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t+1).
+        P : array-like
+            State prediction variance (value of t+1).
+        a : array-like
+            State prediction (value of t+1).
             
-            t=0
+        Returns
+        -------
+        L : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        r : array-like
+            Intermediate result in the smoothing recursions (value of t).
+        N : array-like
+            Intermediate result N in the filter recursions (value of t).
+        alpha : array-like
+            Smoothed state (value of t).
+        V : array-like
+            Smoothed state variance (value of t).
+
+        """
+        Z_new = np.matrix(self.get_Z_dot(a, Z))
+        M = P*Z_new.transpose()*np.linalg.inv(F)        
+        att = a + v*M.transpose()
+        T_new = np.matrix(self.get_T_dot(att, T))        
+        
+        L_new = T_new
+        r= r*L_new
+        N = L_new.transpose()*N*L_new
+        alpha = a + np.dot(r,P.transpose())
+        V = P - P*N*P
+        
+        return L_new, r, N, alpha, V
+
+    
+    def simulation_smoother_three(self,dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta):
+
+        matrices, list_3d = self.get_matrices(self.matr)
+        a1, P1 = filter_init
+        
+        a1 = np.zeros((np.array(a1).shape))
+
+        t=0
+        T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
+        print(d)
+        alphaplus[t] = dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T  
+        yplus[t] = self.ZFun(alphaplus[t+1].transpose(), Z).transpose() + epsilon[t+1]
+        
+        for t in range(len(alphaplus)-1):
             T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-          #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-            alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-    
-         #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
-            yplus[t] = c + alphaplus[t]*np.transpose(Z)  + np.linalg.cholesky(H)*epsilon[t]
-            for t in range(len(alphaplus)-1):
-                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-                alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*np.linalg.cholesky(Q)*eta[t].reshape(-1,1))
-    
-               # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
-                yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
-                
-            y_tilde = y - yplus
-    
-           # at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-            o = {}
-            o["at"], o["Pt"], o["a"], o["P"], o["v"], o["F"], o["K"], o["newC"], o["newD"], o["alpha"], o["V"], o["r"], o["N"] =  self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-            alpha = o["alpha"]
-            alpha_tilde = alphaplus + alpha.reshape(-1,states)
-    
-            return alpha_tilde
+            eta[t] = np.linalg.cholesky(Q)*np.matrix(eta[t])       
+            epsilon[t] = np.linalg.cholesky(H)*np.matrix(epsilon[t]) 
+            
+            alphaplus[t+1] =  self.get_T(alphaplus[t].transpose(),T).transpose() + R*eta[t]
+            yplus[t+1] =  self.get_Z(alphaplus[t+1].transpose(), Z).transpose() + epsilon[t+1]
+
+        return alphaplus, yplus
+
     
 
         def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, **kwargs):

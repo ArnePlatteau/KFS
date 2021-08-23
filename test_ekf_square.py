@@ -80,17 +80,16 @@ def square_der_fun(x, b):
 
 def dummy_fun(x):
     return x
-"""
-def correct_y_fun(x)
-"""
+
+
 if __name__ == "__main__":
     
     #create data generating process: set parameters and set seed
-    n = 200
+    n = 400
     Q = np.matrix(4.0)
     H=  np.matrix(0.01)
     T= np.matrix(0.7)
-    np.random.seed(0)
+    np.random.seed(10)
     Z = np.matrix(1)
     
     #make noise vectors
@@ -99,8 +98,8 @@ if __name__ == "__main__":
     
     #create state vector and initialise
     a_array = np.zeros((n,1))
-    d_array = 4
-    
+    d_array = 3
+    c_array = 0
     a_array[0] = 0
     
     #fill the state vector
@@ -108,54 +107,61 @@ if __name__ == "__main__":
         a_array[i]= d_array + a_array[i-1]*T.transpose()  + noise_state[i]
     
     #create observation vector
-    y = (a_array**2)*Z.transpose() + noise_obs.reshape(-1,1)
+    y = c_array + (a_array **2)*Z.transpose()+ noise_obs.reshape(-1,1) 
     y = np.array(y)
     
     #set a number of observations to nan to demonstrate missing value handling
     y[50:80] = np.nan
     a_array[50:80] = np.nan
     
-    
+    period = np.zeros((25,1))   
+    period[:] = np.nan
+    y = np.append(y, period, axis = 0)
+
     #create state_space object
     QuadFilter = eStateSpacer(square_fun, square_der_fun, lin_fun, one_fun )
-    
+    #QuadFilter = eStateSpacer(lin_fun, one_fun, lin_fun, one_fun )
     #set the function
-    kalman_llik = QuadFilter.kalman_llik_diffuse
+    kalman_llik = QuadFilter.kalman_llik
     
     #initialise parameters and filter
-    filter_init =  (10), (1e7)
-    param_init=  (1, 1, 0)
-    
+    filter_init =  (np.sqrt(np.mean(y[~np.isnan(y)]))), (np.std(y[~np.isnan(y)]))
+    param_init=  (0,1, 1,0,0)
+    param_init=  (1, 1, 1)
+    param_init=  (0, 1, 1,0)
+
     #set initial matrices
     QuadFilter.init_matrices( T= T, R=None, Z=None, Q=Q, H= H, 
                                 c=None, d=None, states = 1, eta_size = 1)
     
+    QuadFilter.matr['T'][0,0] = np.nan
     QuadFilter.matr['Q'][0,0] = np.nan
     QuadFilter.matr['H'][0,0] = np.nan
     QuadFilter.matr['d'][0,0] = np.nan
     
     #estimate MLE parameters
-    bnds = ((1, 50000),(1, 50000),(-5,5 ))
+    bnds = ((-.999,.999),(.00001, 1000),(0.00001, 1000),(-5,5))
+
     QuadFilter.fit(y, kalman_llik=kalman_llik,
                             filter_init=filter_init, param_init=param_init, bnds=bnds)
-    
+     
     #get output
     o = QuadFilter.smoother(y, filter_init)
     output, errors = o['output'], o['errors']
-    """
+    
+    
     #test the simulation smoother
-    nsim =100
-    simulations = QuadFilter.simulation_smoother(y, filter_init, nsim,alpha_fun=dummy_fun,
-                                                 y_fun )
+    nsim =10
+    simulations = QuadFilter.simulation_smoother_2(y, filter_init, nsim )
     
-    #plot simulated paths and actual alpha
     for i in range(nsim):
-        plt.plot(simulations[:,:,i],c='grey')
-    for i in range(output_smooth['alpha'].shape[2]):
-        plt.plot(output_smooth['alpha'][:,:,i])
+        plt.plot(simulations[:,:,i],c='grey', alpha=0.2)
+    for i in range(output['alpha'].shape[2]):
+        plt.plot(output['alpha'][:,:,i], c='orange', label= 'Smoothed state')
+    plt.title('Simulation smoother')
     plt.show()
-    """
-    
+
+
     
     #do not plot first observations 
     first = 1
