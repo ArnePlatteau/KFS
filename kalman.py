@@ -334,6 +334,7 @@ class state_spacer():
                 self.matr['d'] = np.array(d)
             self.matr['d'] = self.matr['d'].astype(float)
         
+            self.list_3d = collect_3d(self.matr)
         else: 
             print("error: dimensions don't match")
             
@@ -759,15 +760,13 @@ class state_spacer():
                 #get system matrices and the observation at time t
                 T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
                 yt = y[t]
-                
+                args = yt, a[t], P[t], Z, T, c, d, H, Q, R, v_obj, F_obj, att_obj, Ptt_obj
                 #in case the observation is not missing: base iteration
                 if not np.isnan(yt):
-                    v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
-                                                                                                                    v_obj, F_obj, att_obj, Ptt_obj )
+                    v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(*args)
                 #else, the missing observation iteration is performed
                 else:
-                    v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration_missing(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
-                                                                                                                                v_obj, F_obj, att_obj, Ptt_obj )
+                    v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration_missing(*args )
   
         #this is the workflow if no observations are missing 
         else: 
@@ -777,9 +776,9 @@ class state_spacer():
                 T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
                 yt = y[t]
                 
+                args = yt, a[t], P[t], Z, T, c, d, H, Q, R, v_obj, F_obj, att_obj, Ptt_obj
                 #perform base iteration
-                v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(yt, a[t], P[t], Z, T, c, d, H, Q, R, 
-                                                                                                                    v_obj, F_obj, att_obj, Ptt_obj )
+                v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(*args)
                                                                                                                             
         return at, Pt, a, P, v, F, K, newC, newD
     
@@ -912,8 +911,6 @@ class state_spacer():
         V = P - P*N*P
         
         return L, r, N, alpha, V
-
-
     
         
     def smoother_base(self, y, filter_init, return_smoothed_errors=True):
@@ -974,26 +971,28 @@ class state_spacer():
             for t in range(len(a)-3, -1,-1):
                 #get the matrices at time t+1
                 T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
+                args = v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1]
                 
                 #if the observation is not missing, use the normal recursion
                 if not np.isnan(v[t+1]):
-                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(*args)
             
                 #use missing observation recursion if necessary
                 else: 
-                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration_missing(*args)
       
             #last recursion for alpha and V at time 0
             t = - 1
             T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
-    
+            args = v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1]
+
             #recursion if observation is not missing
             if not np.isnan(v[t+1]):
-                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(*args)
      
             #recursion in case of missing observation
             else: 
-                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration_missing(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration_missing(*args)
 
 
         #flow if no missing observations                
@@ -1001,14 +1000,15 @@ class state_spacer():
             #loop over the observations backwards
             for t in range(len(a)-3, -1,-1):
                 T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
+                args = v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1]
                 
-                L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+                L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(*args)
 
             #recursion at time 0 for alpha and V
             t = - 1
             T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
-                
-            _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1])
+            args = v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1]
+            _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(*args)
 
         #if the smoothed errors also need to be computed
         if return_smoothed_errors: 
