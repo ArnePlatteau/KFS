@@ -480,8 +480,7 @@ class eStateSpacer(StateSpacer):
 
         t=0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-        print(d)
-        alphaplus[t] = dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T  
+        alphaplus[t] = dist_fun_alpha1(a1,P1,size=(n)).T  
         yplus[t] = self.ZFun(alphaplus[t+1].transpose(), Z).transpose() + epsilon[t+1]
         
         for t in range(len(alphaplus)-1):
