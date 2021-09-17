@@ -142,7 +142,7 @@ if __name__ == "__main__":
     #estimate MLE parameters
     bnds = ((-.999,.999),(.00001, 1000),(0.00001, 1000),(-5,5))
 
-    QuadFilter.fit(y, kalman_llik=kalman_llik,
+    QuadFilter.fit(y, optim_fun=kalman_llik,
                             filter_init=filter_init, param_init=param_init, bnds=bnds)
      
     #get output
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     
     #test the simulation smoother
     nsim =10
-    simulations = QuadFilter.simulation_smoother_2(y, filter_init, nsim )
+    simulations = QuadFilter.simulation_smoother(y, filter_init, nsim )
     
     for i in range(nsim):
         plt.plot(simulations[:,:,i],c='grey', alpha=0.2)

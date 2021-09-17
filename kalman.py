@@ -40,7 +40,8 @@ def llik_gaussian(v, F):
     #compute the sum of vt*Ft^-1*vt' for all t in T
     accum = 0
     for t in range(T):
-        accum += v_temp[t]*np.linalg.inv(F[t])*v_temp[t].transpose()
+        for i in range(v.shape[1]):
+            accum += v_temp[t,i]*np.linalg.inv(np.matrix(F[t,i]))*v_temp[t,i].transpose()
 
     #log likelihood function: -n/2 * log(2*pi) - 1/2*sum(log(F_t) + v_t^2/F_t)
     l = -(T / 2) * np.log(2 * np.pi) - (1 / 2) * (np.log(np.linalg.det(F)).sum()) - (1 / 2) * (
@@ -51,8 +52,8 @@ def llik_gaussian(v, F):
     return llik
 
 
-def ml_estimator_matrix( y, matr, param_loc, kalman_llik, filter_init, param_init,
-                            bnds,  method = 'L-BFGS-B',
+def ml_estimator_matrix( y, matr, param_loc, optim_fun, filter_init, param_init,
+                            bnds, covariance_loc = [],  method = 'L-BFGS-B',
                             options = {'eps': 1e-07,'disp': True,'maxiter': 200}, **llik_kwargs):
         """
         MLE estimator which optimises the likelihood function given, based on 
@@ -92,13 +93,13 @@ def ml_estimator_matrix( y, matr, param_loc, kalman_llik, filter_init, param_ini
         #make object with all arguments together 
         
         if llik_kwargs:         
-            args = (y, matr, param_loc, filter_init, llik_kwargs)
+            args = (y, matr, param_loc, filter_init, covariance_loc, llik_kwargs)
         else:
-            args = (y, matr, param_loc, filter_init)
+            args = (y, matr, param_loc, filter_init, covariance_loc)
            
 
         #optimize log_likelihood 
-        results = optimize.minimize(kalman_llik, param_init,
+        results = optimize.minimize(optim_fun, param_init,
                                           options=options, args = args,
                                           method=method, bounds=bnds)
         
@@ -484,7 +485,7 @@ class state_spacer():
         P    = np.zeros((time + 1, P_init.shape[0], P_init.shape[1]))
         F    = np.zeros((time    , y.shape[1], y.shape[1]))
         K    = np.zeros((time    , a_init.shape[1], y.shape[1]))
-        v    = np.zeros((time    , y.shape[1], 1))
+        v    = np.zeros((time    , y.shape[1]))
         
         #fill first element with the initialisation
         a[0,:] = a_init
@@ -587,90 +588,6 @@ class state_spacer():
         return v, F, K, att, Ptt, at1, Pt1, c, d
 
 
-    def kalman_filter_iteration_missing(self, yt, a, P, Z, T, c, d, H, Q, R,
-                                v, F, att, Ptt, tol = 1e7 ):        
-        """
-        Kalman iteration function in case the observation is missing.
-        
-        v_t = undefined
-        F_t = infinity
-        K_t = 0
-        a_{t+1} = T_t* a_t + d
-        P_{t+1} = T*P_t*T_t' + R_t*Q_t*R_t'
-
-        Parameters
-        ----------
-        yt : int or array-like
-            Observation data at time t.
-        a : int or array-like
-            State prediction for time t.
-        P : int or array-like
-            Variance of state prediction for time t.
-        Z : array-like
-            System matrix Zt.
-        T : array-like
-            System matrix Tt.
-        c : array-like
-            System matrix ct.
-        d : array-like
-            System matrix dt.
-        H : array-like
-            System matrix Ht.
-        Q : array-like
-            System matrix Qt.
-        R : array-like
-            System matrix Rt.
-        v : int or array-like
-            Previous prediction error. (not used in the code, placeholder)
-        F : int or array-like
-            Previous prediction error variance. (not used in the code, placeholder)
-        att : int or array-like
-            Previous filtered state (t-1).
-        Ptt : int or array-like
-            Previous filtered state variance (t-1).
-        tol : int or float, optional
-            High value which in theory should go to infinity. The default is 1e7.
-
-        Returns
-        -------
-        v : int or array-like
-            New prediction error.
-        F : int or array-like
-            New prediction error variance.
-        K : int or array-like
-            New K.
-        att : int or array-like
-            New filtered state (time t).
-        Ptt : int or array-like
-            New filtered state variance (time t).
-        at1 : int or array-like
-            New state prediction for t + 1.
-        Pt1 : int or array-like
-            Variance of state prediction for t + 1.
-        c : array-like
-            Just c, no transformation happens in normal Kalman filter.
-        d : array-like
-            Just d, no transformation happens in normal Kalman filter.
-
-        """
-        
-        #v and a are transposed
-        v = yt*np.nan
-    
-        #F, P and K are not transposed
-        F = np.matrix(np.ones(H.shape)*tol)
-        M = np.matrix(np.zeros((P*Z.transpose()*np.linalg.inv(F)).shape))
-        K = T*M
-        
-        att = a 
-        Ptt = P
-        
-        at1 = a*T.transpose() + d.transpose()
-        Pt1 = T*P*T.transpose() + R*Q*R.transpose() 
-        
-        return v, F, K, att, Ptt, at1, Pt1, c, d
-
-
     def create_empty_objs(self, yt, H, at, Pt):
         """
         Helper function to create certain empty objects, which are later 
@@ -770,34 +687,6 @@ class state_spacer():
 
         #create empty objects for the results
         v_obj, F_obj, att_obj, Ptt_obj = self.create_empty_objs(yt, H, a[t], P[t])
-        """
-        #check if there is a nan in the observations
-        if np.isnan(np.sum(y)):
-            #go over the observation array
-            for t in range(time):
-                #get system matrices and the observation at time t
-                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
-                yt = y[t]
-                filter_args = yt, a[t], P[t], Z, T, c, d, H, Q, R, v_obj, F_obj, att_obj, Ptt_obj
-                #in case the observation is not missing: base iteration
-                if not np.isnan(yt):
-                    filter_fun = self.kalman_filter_iteration
-                else: 
-                    filter_fun = self.kalman_filter_iteration_missing
-
-                v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = filter_fun(*filter_args)
-        #this is the workflow if no observations are missing 
-        else: 
-            #go over the observation array
-            for t in range(time):
-                #get system matrices and the observation at time t
-                T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices)
-                yt = y[t]
-                
-                filter_args = yt, a[t], P[t], Z, T, c, d, H, Q, R, v_obj, F_obj, att_obj, Ptt_obj
-                #perform base iteration
-                v[t], F[t], K[t], at[t], Pt[t], a[t+1], P[t+1], newC[:,:,t], newD[:,:,t] = self.kalman_filter_iteration(*filter_args)
-                """
                 
         for t in range(time):
             #get system matrices and the observation at time t
@@ -892,59 +781,6 @@ class state_spacer():
         return L, r, N, alpha, V
 
 
-    def smoothing_iteration_missing(self, v, F, r, T, K, Z, N, P, a):    
-        """
-        Single smoothing iteration recursion when the observation is missing.
-        Lt+1 = Tt+1- Kt+1*Zt+1
-        r_t =  r{t+1}*L{t+1}
-        N_t = L{t+1}*N{t+1}*L{t+1}
-        alpha{t+1} = a{t+1} + r[t]*P{t+1}'
-        V{t+1} = P{t+1} - P{t+1}*N_t*P{t+1}
-
-        Parameters
-        ----------
-        v : array-like
-            Prediction error (value of t+1).
-        F : array-like
-            Prediction error variance (value of t+1).
-        r : array-like
-            Intermediate result in the smoothing recursions (value of t+1).
-        T : array-like
-            System matrix T (value of t).
-        K : array-like
-            Intermediate result K in the filter recursions (value of t+1).
-        Z : array-like
-            System matrix Z (value of t).
-        N : array-like
-            Intermediate result N in the filter recursions (value of t+1).
-        P : array-like
-            State prediction variance (value of t+1).
-        a : array-like
-            State prediction (value of t+1).
-            
-        Returns
-        -------
-        L : array-like
-            Intermediate result in the smoothing recursions (value of t).
-        r : array-like
-            Intermediate result in the smoothing recursions (value of t).
-        N : array-like
-            Intermediate result N in the filter recursions (value of t).
-        alpha : array-like
-            Smoothed state (value of t).
-        V : array-like
-            Smoothed state variance (value of t).
-
-        """
-        
-        L = T 
-        r= r*L
-        N = L.transpose()*N*L
-        alpha = a + np.dot(r,P.transpose())
-        V = P - P*N*P
-        
-        return L, r, N, alpha, V
-    
         
     def smoother_base(self, y, filter_init, return_smoothed_errors=True):
         """
@@ -999,36 +835,7 @@ class state_spacer():
         r, N, alpha, V = r[:len(r)-1], N[:len(N)-1], alpha[:len(alpha)-1], V[:len(V)-1]
         
         #flow if there are missing observations
-        if np.isnan(np.sum(v)):
-            """
-            #loop over the observations backwards
-            for t in range(len(a)-3, -1,-1):
-                #get the matrices at time t+1
-                T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
-                args = v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1]
-                
-                #if the observation is not missing, use the normal recursion
-                if not np.isnan(v[t+1]):
-                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration(*args)
-            
-                #use missing observation recursion if necessary
-                else: 
-                    L, r[t], N[t], alpha[t+1], V[t+1] = self.smoothing_iteration_missing(*args)
-      
-            #last recursion for alpha and V at time 0
-            t = - 1
-            T, _, Z, _, _, _, _ = self.get_syst_matrices(list_3d, t+1, matrices.copy())
-            args = v[t+1], F[t+1], r[t+1], T, K[t+1], Z, N[t+1], P[t+1], a[t+1]
-
-            #recursion if observation is not missing
-            if not np.isnan(v[t+1]):
-                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration(*args)
-     
-            #recursion in case of missing observation
-            else: 
-                _, _, _, alpha[t+1], V[t+1] = self.smoothing_iteration_missing(*args)
-            """
-            
+        if np.isnan(np.sum(v)):            
             #loop over the observations backwards
             for t in range(len(a)-3, -1,-1):
                 #get the matrices at time t+1
@@ -1156,7 +963,7 @@ class state_spacer():
         return y_hat, ub, lb
     
     
-    def kalman_llik_base(self, param, y, matr, param_loc, filter_init, 
+    def kalman_llik(self, param, y, matr, param_loc, filter_init, covariance_loc = [],
                          diffuse = 0, llik_fun = llik_gaussian):
         """
         Loglikelihood function for the Kalman filter system matrices. 
@@ -1189,57 +996,45 @@ class state_spacer():
         llik_fun(v, F) : integer
             Evaluation of the log likelihood by the given function.
 
-        """        
-        
+        """       
+        i = 0
         #get the elements which are optimised in the ML function
-        for key in param_loc.keys():
-            matr[param_loc[key][0]][param_loc[key][1],param_loc[key][2]] = param[key]
+        for element in param_loc:
+            matr[element[0]][element[1],element[2]] = param[i]   
+            i += 1
+            
+        #make covariance as rho*sigx*sigy (the element in the optimisation is rho)
+        for element in covariance_loc:
+            sigxsigy = (matr[element[0]][element[1],element[1]]**(.5))*(matr[element[0]][element[2],element[2]]**(.5))
+            matr[element[0]][element[1],element[2]] = matr[element[0]][element[1],element[2]]*sigxsigy
         
+        #make Q and H symmetric by a making triangular matrix (where diagonal is zero), transpose it and add it to the origianl matrix
+        for key in ['Q', 'H']:
+            #dummy where also diagonal is zero
+            dummy = matr[key].copy()
+            dummy[np.arange(dummy.shape[0])[:,None] <= np.arange(dummy.shape[1])] = 0
+
+            #ensure that the original is triangular
+            matr[key][np.arange(matr[key].shape[0])[:,None] < np.arange(matr[key].shape[1])] = 0
+            
+            #necessary to handle 2D and 3D arrays respectively
+            if len(dummy.shape) > 2:
+                matr[key] = matr[key] + dummy.transpose((1,0,2))  #- np.diagonal(matr[key].diagonal(0,0,1).T)
+            else: 
+                matr[key] = matr[key] + dummy.transpose((1,0))  #- np.diagonal(matr[key].diagonal(0,0,1).T)
+
         #apply Kalman Filter
         _, _, _, _, v, F, _, _, _  =  self.kalman_filter_base(y, filter_init, 
                                                               matr)
         
         #first element not used in diffuse likelihood
-        v = v[diffuse:,:,:]
+        v = v[diffuse:,:]
         F = F[diffuse:,:,:]
 
         return llik_fun(v, F)
         
     
-    def kalman_llik(self, param, y, matr, param_loc, filter_init, 
-                    diffuse=0, llik_fun = llik_gaussian):
-        """
-        Wrapper around the kalman_llik_base function where diffuse is set to 0.
-
-        Parameters
-        ----------
-        param : dict
-            Parameter values tried.
-        y : array-like
-            Observation data.
-        matr : dict
-            System matrices used in the evaluation of the likelihood function.
-        param_loc : dict
-            Dictionnary with the locations and matrices of the parameters to 
-            be optimised in the maximum likelihood function.
-        filter_init : tuple
-            initialisation of the filter.
-        llik_fun : function, optional
-            Function used to compute the log likelihood. 
-            The default is llik_gaussian.
-
-        Returns
-        -------
-         self.kalman_llik_base( param, y, matr, param_loc, filter_init, 
-                          llik_gaussian, diffuse = 1) : integer
-            Evaluation of the log likelihood by the given function.
-
-        """
-        return self.kalman_llik_base(param, y, matr, param_loc, filter_init, 
-                                 diffuse, llik_fun)
-
-    
-    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, 
+    def kalman_llik_diffuse(self, param, y, matr, param_loc, filter_init, covariance_loc = [],
                             llik_fun = llik_gaussian):
         """
         Wrapper around the kalman_llik_base function where diffuse is set to 1.
@@ -1266,14 +1061,13 @@ class state_spacer():
          self.kalman_llik_base( param, y, matr, param_loc, filter_init, 
                           llik_gaussian, diffuse = 1) : integer
             Evaluation of the log likelihood by the given function.
-
         """
-        return self.kalman_llik_base(param, y, matr, param_loc, filter_init, 
+        return self.kalman_llik(param, y, matr, param_loc, filter_init, covariance_loc,
                                      diffuse = 1, llik_fun=llik_fun)
     
     
     def fit(self, y, fit_method= ml_estimator_matrix, 
-            matrix_order = ['T','R','Z','Q','H','c','d'], **fit_kwargs):
+            matrix_order = ['T','Z','R','Q','H','c','d'], **fit_kwargs):
         """
         Fit function for estimating the system matrices based on the observations
         given. The function collects the parameters which are to be estimated 
@@ -1287,7 +1081,7 @@ class state_spacer():
             Function for the estimation of the parameters. 
             The default is ml_estimator_matrix.
         matrix_order : list, optional
-            order of the system matrices. The default is ['T','R','Z','Q','H','c','d'].
+            order of the system matrices. The default is ['T','Z','R','Q','H','c','d'].
         **fit_kwargs : dict
             additional arguments necessary for running the fit function.
 
@@ -1300,9 +1094,10 @@ class state_spacer():
         
         #make a dict which contains all parameter locations in the system 
         #matrices which need to be estimated
-        param_loc = {}
+        param_loc = []
+        covariance_loc = [] #also keep which covariances are being estimated
+        
         #go through teh system matrices
-        i=0
         for key in  (matrix_order):
             #get the elements which are np.nan
             nan_location = np.argwhere(np.isnan(self.matr[key]))[:,[0,1]]
@@ -1312,19 +1107,53 @@ class state_spacer():
             #add the matrix, as well as the location in the matrix to the dict
             #with locations
             for loc in nan_location:
-                param_loc[i] = key, loc[0], loc[1]
-                i += 1
-        
+                #if nan in Q or H specified in upper part: bring it to lower part
+                if (key in  ['Q','H']) & (loc[0] > loc[1]):
+                    covariance_loc.append((key, loc[0], loc[1]))
+                    
+                if (key in  ['Q','H']) & (loc[0] < loc[1]):
+                    param_loc.append((key, loc[1], loc[0]))
+                    covariance_loc.append((key, loc[1], loc[0])) #turned around (because matrices are made triangular)
+                else:
+                    param_loc.append((key, loc[0], loc[1]))
+
+        param_loc = list(dict.fromkeys(param_loc))
+        #set zeros on upper part of Q and H (in the llik function, both are mirrored)
+        for key in ['Q','H']:
+            self.matr[key] = np.tril(self.matr[key])
+
+        fit_kwargs['covariance_loc'] = covariance_loc
         #apply the fit method to the system matrices
         res = fit_method(y, self.matr, param_loc, **fit_kwargs)
         
         #get the results of the optimisation
         param = res.x
 
+        i = 0
         #get the elements which are optimised in the fit function
-        for key in param_loc.keys():
-            self.matr[param_loc[key][0]][param_loc[key][1],param_loc[key][2]] = param[key]
+        for element in param_loc:
+            self.matr[element[0]][element[1],element[2]] = param[i]
+            i += 1
         
+        for element in covariance_loc:
+            sigxsigy = (self.matr[element[0]][element[1],element[1]]**(.5))*(self.matr[element[0]][element[2],element[2]]**(.5))
+            self.matr[element[0]][element[1],element[2]] = self.matr[element[0]][element[1],element[2]]*sigxsigy
+
+        #make Q and H symmetric by a making triangular matrix (where diagonal is zero), transpose it and add it to the origianl matrix
+        for key in ['Q', 'H']:
+            #dummy where also diagonal is zero
+            dummy = self.matr[key].copy()
+            dummy[np.arange(dummy.shape[0])[:,None] <= np.arange(dummy.shape[1])] = 0
+            #ensure that the original is triangular
+            self.matr[key][np.arange(self.matr[key].shape[0])[:,None] < np.arange(self.matr[key].shape[1])] = 0
+            
+            #necessary to handle 2D and 3D arrays respectively
+            if len(dummy.shape) > 2:
+                self.matr[key] = self.matr[key] + dummy.transpose((1,0,2))  #- np.diagonal(matr[key].diagonal(0,0,1).T)
+            else: 
+                self.matr[key] = self.matr[key] + dummy.transpose((1,0))  #- np.diagonal(matr[key].diagonal(0,0,1).T)
+
+
         #set boolean showing if the model is fitted to true
         self.fitted = True
         
@@ -1353,12 +1182,9 @@ class state_spacer():
         y[:,:] = np.nan
         at, Pt, a, P, _, _, _, _, _ = self.kalman_filter_base(y, forecast_init,  self.matr)
         
-        y_hat = np.tensordot(at, self.matr['Z'].transpose(),
-                         axes=([1,2],[1,0])).reshape((
-                             forecast_horizon, self.matr['Z'].shape[0])) + self.matr['c'].transpose()
-
-        _,lb,ub =    self.observation_CI(y, forecast_init, n, conf=conf,
+        y_hat, lb, ub = self.observation_CI(y, forecast_init, n, conf=conf,
                                          dist_fun_alpha1=dist_fun_alpha1, **kwargs)
+        
         return y_hat, lb, ub
     
 
@@ -1427,9 +1253,7 @@ class state_spacer():
         var_eta_cond = Q - Q * np.transpose(R) * N * R * Q
     
         return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
-    
-
-        
+            
 
     def disturbance_smoothing_errors(self,  v, F, K, r, N, matrices, list_3d):
         """
@@ -1488,128 +1312,9 @@ class state_spacer():
             u[t], D[t],  epsilon_hat[t], var_epsilon_cond[t],  eta_hat[t],  var_eta_cond[t] = self.disturbance_smoothing_errors_iteration(H, Q, R, v[t], F[t], K[t], r[t], N[t])
     
         return  u, D,  epsilon_hat, var_epsilon_cond,  eta_hat,  var_eta_cond
-
-
-    def simulation_smoother_one(self, y, filter_init, eta, epsilon, dist_fun_alpha1):
-        """
-        Implementation of the simulation smoother. Compute a single path of 
-        alpha_tilde.
-
-        Parameters
-        ----------
-        y : array-like
-            Observation data.
-        filter_init : tuple
-            filter initalisation.
-        eta : array-like
-            Series of simulated state errors.
-        epsilon : array-like
-            Series of simulated observation errors.
-        dist_fun_alpha1 : function
-            distribution of the first element of alpha.
-
-        Returns
-        -------
-        alpha_tilde : simulated path of alpha.
-
-        """
-        #get matrices
-        matrices, list_3d = self.get_matrices(self.matr)
-        
-        #determine the number of states
-        states = self.matr['T'].shape[1]
-        
-        #initialise arrays
-        alphaplus = np.zeros((len(y), states))
-        yplus = np.zeros(y.shape)
     
-        #unpack filter initialisation
-        a1, P1 = filter_init
-        
-        #get first system matrices
-        t=0
-        T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-        
-        #compute the alpha+1 and y+1
-      #  alphaplus[t,:] = (d + np.matrix(np.random.multivariate_normal(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-        alphaplus[t,:] = (d + np.matrix(dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)))).T).reshape(-1)
-     #   alphaplus[t] = d + np.matrix(np.random.normal(a1,np.linalg.cholesky(np.matrix(P1)),size=(alphaplus[t].shape))).reshape(-1)
-        yplus[t] = c + alphaplus[t]*np.transpose(Z)  + np.linalg.cholesky(H)*epsilon[t]
-        
-        #create alpha+ and y+ iteratively
-        for t in range(len(alphaplus)-1):
-            T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-            alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(R*np.linalg.cholesky(Q)*eta[t].reshape(-1,1))
-           # alphaplus[t+1] = np.transpose(d) +  alphaplus[t]*np.transpose(T) + np.transpose(eta[t].reshape(-1,1))*np.transpose(np.linalg.cholesky(Q))*np.transpose(R)
-            yplus[t+1] = np.transpose(c) + alphaplus[t+1]*np.transpose(Z) + np.transpose(epsilon[t+1])*np.transpose(np.linalg.cholesky(H))
-            
-        #compute y_tilde
-        y_tilde = y - yplus
-
-        #run the KFS on y_tilde
-        at, Pt, a, P, v, F, K, newC, newD, alpha, V, r, N = self.smoother_base(y_tilde, filter_init,return_smoothed_errors=False)
-
-        #compute alpha tilde        
-        alpha_tilde = alphaplus + alpha.reshape(-1,states)
-
-        return alpha_tilde
-
     
     def simulation_smoother(self, y, filter_init, n, dist_fun_alpha1=None, 
-                            **kwargs):
-        """
-        Computes n paths of alpha_tilde via simulation smoothing.        
-
-        Parameters
-        ----------
-        y : array-like
-            Observation data.
-        filter_init : tuple
-            filter initalisation.
-        n : integer
-            number of paths to be simulated.
-        dist_fun_alpha1 : function, optional
-            distribution of alpha1. The default is None.
-        **kwargs : dict
-            DESCRIPTION.
-
-        Returns
-        -------
-        alpha_tilde_array : array-like
-            array of simulated paths of alpha_tilde.
-
-        """
-        #determine the number of states
-        states = self.matr['T'].shape[1]
-        
-        #in case no distribution is given, alpha1 is assumed to be normally 
-        #distributed (potentially multivariate).
-        if dist_fun_alpha1 is None:
-            if self.matr['R'].shape[1] > 1:
-                dist_fun_alpha1 = np.random.multivariate_normal
-            else:
-                dist_fun_alpha1 = np.random.normal
-        
-        #change the form of the error term array to have n simulations
-        eps_shape = list(y.shape)
-        eps_shape.append(n)
-        eps_shape = tuple(eps_shape)
-        
-        #simulate error terms
-        epsilon = np.random.normal(0,1, size=eps_shape)
-        eta = np.random.normal(0,1, size=(len(y),self.matr['R'].shape[1],n))
-                
-        #initialise the alpha tilde array
-        alpha_tilde_array = np.zeros((len(y), states,n))
-
-        #compute the smoothed paths one by one
-        for i in range(n):
-            alpha_tilde_array[:,:,i] = self.simulation_smoother_one(y, filter_init, eta[:,:,i], epsilon[:,:,i], dist_fun_alpha1, **kwargs)
-        
-        return alpha_tilde_array
-    
-    
-    def simulation_smoother_2(self, y, filter_init, n, dist_fun_alpha1=None, 
                             **kwargs):
             """
             Computes n paths of alpha_tilde via simulation smoothing.        
@@ -1643,7 +1348,6 @@ class state_spacer():
                     dist_fun_alpha1 = np.random.multivariate_normal
                 else:
                     dist_fun_alpha1 = np.random.normal
-                    filter_init[1] = np.linalg.cholesky(filter_init[1])
                     
             #change the form of the error term array to have n simulations
             eps_shape = list(y.shape)
@@ -1661,7 +1365,7 @@ class state_spacer():
             alphaplus = np.zeros((len(y), states,n))
             yplus = np.zeros((y.shape[0], y.shape[1],n))
               
-            alphaplus, yplus = self.simulation_smoother_three(dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta, **kwargs)
+            alphaplus, yplus = self.alphaplus_yplus_generator(dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta, **kwargs)
             at, Pt, a, P, v, F, K, newC, newD, alpha_orig, V, r, N  = self.smoother_base(y, filter_init,return_smoothed_errors=False)
             #compute the smoothed paths one by one
             for i in range(n):
@@ -1678,14 +1382,18 @@ class state_spacer():
             return alpha_tilde_array
  
     
-    def simulation_smoother_three(self,dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta):
+    def alphaplus_yplus_generator(self,dist_fun_alpha1,filter_init,n, alphaplus, yplus, epsilon, eta):
 
         matrices, list_3d = self.get_matrices(self.matr)
         a1, P1 = filter_init
         a1 = np.zeros((np.array(a1).shape))
         t=0
         T, R, Z, Q, H, c, d = self.get_syst_matrices(list_3d, t, matrices.copy())
-        a1 = np.array(a1).reshape(a1.shape[1])
+        if len(a1.shape)>1:
+            a1 = np.array(a1).reshape(a1.shape[1])
+        else:
+            P1 = np.sqrt(P1)
+            
         alphaplus[t]  = dist_fun_alpha1(a1,P1,size=(n)).T
         yplus[t] =  Z*alphaplus[t]  + epsilon[t]
       #  alphaplus[t]  = dist_fun_alpha1(a1,np.linalg.cholesky(np.matrix(P1)),size=(n)).T
@@ -1708,7 +1416,7 @@ class state_spacer():
 
     def monte_carlo_y(self, y, filter_init, n, dist_fun_alpha1=None, **kwargs):
         
-        alpha_tilde = self.simulation_smoother_2(y, filter_init, n, dist_fun_alpha1, 
+        alpha_tilde = self.simulation_smoother(y, filter_init, n, dist_fun_alpha1, 
                             **kwargs)
         y = np.tensordot(alpha_tilde, self.matr['Z'].transpose(),
                          axes=([1],[0])) + np.array(self.matr['c'].transpose())

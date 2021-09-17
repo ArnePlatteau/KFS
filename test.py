@@ -9,6 +9,8 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from kalman import state_spacer
+from collapsedFilter import collapsedStateSpacer
+
 import time
 
 #testing the functions
@@ -23,20 +25,23 @@ if __name__ == "__main__":
     period[:] = np.nan
     period_pre = np.zeros((30,1))   
     period_pre[:] = np.nan
-
+    
+  #  y = np.append(y, np.array(10).reshape(1,1), axis = 0)
+    
     y = np.append(y, period, axis = 0)
     y = np.append(period_pre, y, axis = 0)
 
     conf =0.9
     
     #number of simulations in simulation smoother
-    nsim = 300
+    nsim = 100
     
     #create state_space object
     Nile_filter = state_spacer()
+    #Nile_filter = collapsedStateSpacer()
     
     #choose model specification
-    simple_model = True
+    simple_model = False
     
     if simple_model:
         #set the function and initialisation of the matrices
@@ -80,13 +85,14 @@ if __name__ == "__main__":
         Nile_filter.matr['Q'][1,1] = np.nan
         Nile_filter.matr['H'][0,0] = np.nan
         Nile_filter.matr['Q'][0,0] = np.nan
+   #     Nile_filter.matr['d'][1,0] = np.nan
         
-        bnds = ((-.999,.999), (4000, 5000), (12, 16),(180, 200))
-
+        bnds = ((-.999,.999), (-1000,1000),(4000, 5000), (12, 16),(180, 200))
+        bnds = ((-.999,.999),(4000, 5000), (12, 16),(180, 200))
+        
     #estimate MLE parameters
-    Nile_filter.fit(y, kalman_llik=kalman_llik,
+    Nile_filter.fit(y, optim_fun=kalman_llik,
                     filter_init=filter_init, param_init=param_init, bnds=bnds)
-
 
     o = Nile_filter.smoother(y, filter_init)
     output, errors = o['output'], o['errors']
@@ -95,9 +101,8 @@ if __name__ == "__main__":
     o = Nile_filter.kalman_smoother_CI(y, filter_init,conf=conf)
     output, errors = o['output'], o['errors']
         
-   
     #test the simulation smoother    
-    simulations = Nile_filter.simulation_smoother_2(y, filter_init, nsim)
+    simulations = Nile_filter.simulation_smoother(y, filter_init, nsim)
     
     #plot simulated paths and actual alpha
     for i in range(nsim):
@@ -107,6 +112,17 @@ if __name__ == "__main__":
     plt.title('Simulation smoother')
     plt.show()
     
+    y_sim =  Nile_filter.monte_carlo_y(y, filter_init, nsim)
+    plt.plot(y_sim[:,:,0], c='orange', label= 'Simulated observations')
+    plt.show()
+    """
+    y_hat, lb, ub = Nile_filter.observation_CI( y, filter_init, 2000, conf=[0.5,.8,.9])
+    plt.plot(y_hat)
+    for i in range(lb.shape[2]):
+        plt.plot(lb[:,:,i])
+        plt.plot(ub[:,:,i])
+    plt.show()
+    """
     #plot data and filtered and smoothed values    
     plt.figure(figsize=(10, 6), dpi=200)
     plt.plot(output["at"][:,:].sum(axis=2), label =  'Filtered state')
